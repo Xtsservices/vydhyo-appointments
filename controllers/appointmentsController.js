@@ -284,6 +284,14 @@ async function cancelSlot(doctorId, date, time) {
 }
 
 exports.getAppointmentTypeCounts = async (req, res) => {
+  const { doctorId } = req.query;
+  const match = {
+    appointmentStatus: { $ne: 'cancelled' },
+    appointmentType: { $in: ['In-Person', 'Video', 'home-visit'] }
+  };
+  if (doctorId) {
+    match.doctorId = doctorId;
+  }
   try {
     const counts = await appointmentModel.aggregate([
       {
@@ -311,6 +319,131 @@ exports.getAppointmentTypeCounts = async (req, res) => {
     res.json({ result });
   } catch (err) {
     res.status(500).json({ status: "fail", message: err.message });
+  }
+};
+
+exports.getTodayAndUpcomingAppointmentsCount = async (req, res) => {
+  try {
+    const { doctorId } = req.query;
+    const now = new Date();
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date(now);
+    todayEnd.setHours(23, 59, 59, 999);
+    const tomorrowStart = new Date(todayEnd);
+    tomorrowStart.setDate(todayEnd.getDate() + 1);
+    tomorrowStart.setHours(0, 0, 0, 0);
+
+    const baseQuery = {};
+    if (doctorId) baseQuery.doctorId = doctorId;
+
+    // Date-based counts
+    const todayQuery = {
+      ...baseQuery,
+      appointmentDate: { $gte: todayStart, $lte: todayEnd }
+    };
+    const upcomingQuery = {
+      ...baseQuery,
+      appointmentDate: { $gte: tomorrowStart }
+    };
+
+    // Status-based counts (all dates)
+    const completedQuery = { ...baseQuery, appointmentStatus: 'completed' };
+    const rescheduledQuery = { ...baseQuery, appointmentStatus: 'rescheduled' };
+    const cancelledQuery = { ...baseQuery, appointmentStatus: 'cancelled' };
+    const activeQuery = { ...baseQuery, appointmentStatus: { $nin: ['cancelled', 'completed'] } };
+    const totalQuery = { ...baseQuery };
+
+    const [
+      today,
+      upcoming,
+      completed,
+      rescheduled,
+      cancelled,
+      active,
+      total
+    ] = await Promise.all([
+      appointmentModel.countDocuments(todayQuery),
+      appointmentModel.countDocuments(upcomingQuery),
+      appointmentModel.countDocuments(completedQuery),
+      appointmentModel.countDocuments(rescheduledQuery),
+      appointmentModel.countDocuments(cancelledQuery),
+      appointmentModel.countDocuments(activeQuery),
+      appointmentModel.countDocuments(totalQuery)
+    ]);
+    
+    res.json({
+      status: 'success',
+      data: {
+        today,
+        upcoming,
+        completed,
+        rescheduled,
+        cancelled,
+        active,
+        total
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ status: 'fail', message: err.message });
+  }
+};
+
+exports.getUniquePatientsStats = async (req, res) => {
+  try {
+    const { doctorId } = req.query;
+    if (!doctorId) {
+      return res.status(400).json({ status: 'fail', message: 'doctorId is required' });
+    }
+    const now = new Date();
+    // Today
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date(now);
+    todayEnd.setHours(23, 59, 59, 999);
+    // This week (Monday to Sunday)
+    const weekStart = new Date(now);
+    weekStart.setDate(now.getDate() - now.getDay() + 1); // Monday
+    weekStart.setHours(0, 0, 0, 0);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekStart.getDate() + 6);
+    weekEnd.setHours(23, 59, 59, 999);
+    // This month
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+
+    // Helper for aggregation
+    const uniquePatients = async (match) => {
+      const result = await appointmentModel.aggregate([
+        { $match: match },
+        { $group: { _id: '$userId' } },
+        { $count: 'count' }
+      ]);
+      return result[0]?.count || 0;
+    };
+    const baseMatch = { doctorId, appointmentStatus: { $ne: 'cancelled' } };
+    const [
+      total,
+      today,
+      week,
+      month
+    ] = await Promise.all([
+      uniquePatients(baseMatch),
+      uniquePatients({ ...baseMatch, appointmentDate: { $gte: todayStart, $lte: todayEnd } }),
+      uniquePatients({ ...baseMatch, appointmentDate: { $gte: weekStart, $lte: weekEnd } }),
+      uniquePatients({ ...baseMatch, appointmentDate: { $gte: monthStart, $lte: monthEnd } })
+    ]);
+    res.json({
+      status: 'success',
+      data: {
+        total,
+        today,
+        week,
+        month
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ status: 'fail', message: err.message });
   }
 };
 
