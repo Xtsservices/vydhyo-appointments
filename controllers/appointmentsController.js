@@ -8,6 +8,7 @@ const generateSlots = require('../utils/generateTimeSlots');
 const { getUserById, getUserDetailsBatch } = require('../services/userService');
 const { createPayment, getAppointmentPayments } = require('../services/paymentService');
 const moment = require('moment-timezone');
+const { parseFlexibleDate } = require('../utils/utils');
 
 exports.createAppointment = async (req, res) => {
   try {
@@ -175,64 +176,84 @@ exports.getAppointmentsWithPayments = async (req, res) => {
       toDate
     } = req.query;
 
-    if (!doctorId) return res.status(400).json({ status: 'fail', message: "doctorId is required" });
+    if (!doctorId) {
+      return res.status(400).json({ status: 'fail', message: "doctorId is required" });
+    }
 
     const query = { doctorId };
     if (appointmentType) query.appointmentType = appointmentType;
     if (appointmentDepartment) query.appointmentDepartment = appointmentDepartment;
     if (appointmentStatus) query.appointmentStatus = appointmentStatus;
 
-    if (appointmentDate) {
-      query.appointmentDate = new Date(appointmentDate);
+    const parsedAppointmentDate = parseFlexibleDate(appointmentDate);
+    if (parsedAppointmentDate) {
+      query.appointmentDate = parsedAppointmentDate;
     }
 
-    if (fromDate || toDate) {
+    const parsedFromDate = parseFlexibleDate(fromDate);
+    const parsedToDate = parseFlexibleDate(toDate);
+
+    if (parsedFromDate || parsedToDate) {
       query.appointmentDate = query.appointmentDate || {};
-      if (fromDate) query.appointmentDate.$gte = new Date(fromDate);
-      if (toDate) query.appointmentDate.$lte = new Date(toDate);
+      if (parsedFromDate) query.appointmentDate.$gte = parsedFromDate;
+      if (parsedToDate) {
+        // Add one day to make the filter inclusive of the whole toDate day
+        parsedToDate.setHours(23, 59, 59, 999);
+        query.appointmentDate.$lte = parsedToDate;
+      }
     }
+    // If no date filters provided, default to today
+    if (!appointmentDate && !fromDate && !toDate) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(today.getDate() + 1);
+      query.appointmentDate = { $gte: today, $lt: tomorrow };
+    }
+
     const appointments = await appointmentModel.find(query);
+    if (!appointments.length) {
+      return res.status(404).json({ status: 'fail', message: "No appointments found" });
+    }
 
-    if (!appointments.length) return res.status(404).json({ status: 'fail', message: "No appointments found" });
-
+    // Prepare user IDs and appointment IDs
     const userIdsSet = new Set();
+    const appointmentIds = [];
+
     appointments.forEach(appt => {
       userIdsSet.add(appt.userId);
       userIdsSet.add(appt.doctorId);
+      appointmentIds.push(appt.appointmentId.toString());
     });
+
     const allUserIds = Array.from(userIdsSet);
-    const userBodyParams = { userIds: allUserIds };
-    const users = await getUserDetailsBatch(req.headers.authorization, userBodyParams);
-    
-    const userMap = new Map();
-    users.forEach(user => userMap.set(user.userId, user));
+    const authHeader = req.headers.authorization;
 
-    const appointmentIds = appointments.map(appointment => appointment.appointmentId.toString());
+    // Call external services in parallel
+    const [users, paymentResp] = await Promise.all([
+      getUserDetailsBatch(authHeader, { userIds: allUserIds }),
+      getAppointmentPayments(authHeader, { appointmentIds })
+    ]);
 
-    const paymentBodyParams = { "appointmentIds": appointmentIds };
+    const userMap = new Map(users.map(user => [user.userId, user]));
+    const paymentMap = new Map(paymentResp.payments.map(payment => [payment.appointmentId, payment]));
 
-    const { payments } = await getAppointmentPayments(req.headers.authorization, paymentBodyParams);
-
-    const paymentMap = new Map();
-    payments.forEach(payment => paymentMap.set(payment.appointmentId, payment));
-
-   const result = appointments.map(appt => {
-      const userDetails = userMap.get(appt.userId) || null;
-      const doctorDetails = userMap.get(appt.doctorId) || null;
-      return {
-        ...appt.toObject(),
-        patientDetails: userDetails,
-        doctorDetails: doctorDetails,
-        paymentDetails: paymentMap.get(appt.appointmentId.toString()) || null
-      };
-    });
+    // Construct response
+    const result = appointments.map(appt => ({
+      ...appt.toObject(),
+      patientDetails: userMap.get(appt.userId) || null,
+      doctorDetails: userMap.get(appt.doctorId) || null,
+      paymentDetails: paymentMap.get(appt.appointmentId.toString()) || null
+    }));
 
     res.json({ status: "success", data: result });
+
   } catch (err) {
     console.error('Error in getAppointmentsWithPayments:', err);
     res.status(500).json({ message: 'Internal Server Error' });
   }
 };
+
 
 async function bookSlot(doctorId, date, time, appointmentId) {
   const result = await DoctorSlotModel.updateOne(
