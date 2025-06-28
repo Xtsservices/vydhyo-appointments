@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { createAppointment, createDoctorSlots, getAppointmentsWithPayments, getAllAppointments,getAppointmentTypeCounts,getTodayAndUpcomingAppointmentsCount,getUniquePatientsStats } = require('../controllers/appointmentsController');
+const { createAppointment, createDoctorSlots, getAppointmentsWithPayments, getAllAppointments,getAppointmentTypeCounts,getTodayAndUpcomingAppointmentsCount,getUniquePatientsStats,getTopDoctorsByAppointmentCount } = require('../controllers/appointmentsController');
 
 router.post('/createAppointment', createAppointment);
 router.post('/createDoctorSlots', createDoctorSlots);
@@ -10,5 +10,6 @@ router.get('/getAppointmentTypeCounts', getAppointmentTypeCounts);
 router.get('/getTodayAndUpcomingAppointmentsCount', getTodayAndUpcomingAppointmentsCount);
 
 router.get('/getUniquePatientsStats', getUniquePatientsStats);
+router.get('/getTopDoctorsByAppointmentCount', getTopDoctorsByAppointmentCount);
 
 module.exports = router;
