@@ -447,3 +447,31 @@ exports.getUniquePatientsStats = async (req, res) => {
   }
 };
 
+exports.getTopDoctorsByAppointmentCount = async (req, res) => {
+  try {
+    const topDoctors = await appointmentModel.aggregate([
+      { $match: { appointmentStatus: { $ne: 'cancelled' } } },
+      {
+        $group: {
+          _id: '$doctorId',
+          count: { $sum: 1 },
+          doctorName: { $first: '$doctorName' }
+        }
+      },
+      { $sort: { count: -1 } },
+      { $limit: 5 },
+      {
+        $project: {
+          doctorId: '$_id',
+          doctorName: 1,
+          count: 1,
+          _id: 0
+        }
+      }
+    ]);
+    res.json({ status: 'success', data: topDoctors });
+  } catch (err) {
+    res.status(500).json({ status: 'fail', message: err.message });
+  }
+};
+
