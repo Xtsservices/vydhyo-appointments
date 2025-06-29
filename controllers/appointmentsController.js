@@ -334,8 +334,11 @@ exports.getTodayAndUpcomingAppointmentsCount = async (req, res) => {
     tomorrowStart.setHours(0, 0, 0, 0);
 
     const baseQuery = {};
-    if (doctorId) baseQuery.doctorId = doctorId;
+    if (doctorId) baseQuery.userId = doctorId;
 
+
+    console.log('--- Dates ---');
+console.log({ todayStart, todayEnd, tomorrowStart, doctorId });
     // Date-based counts
     const todayQuery = {
       ...baseQuery,
@@ -349,6 +352,7 @@ exports.getTodayAndUpcomingAppointmentsCount = async (req, res) => {
     // Status-based counts (all dates)
     const completedQuery = { ...baseQuery, appointmentStatus: 'completed' };
     const rescheduledQuery = { ...baseQuery, appointmentStatus: 'rescheduled' };
+    const scheduledQuery = { ...baseQuery, appointmentStatus: 'scheduled' };
     const cancelledQuery = { ...baseQuery, appointmentStatus: 'cancelled' };
     const activeQuery = { ...baseQuery, appointmentStatus: { $nin: ['cancelled', 'completed'] } };
     const totalQuery = { ...baseQuery };
@@ -358,6 +362,7 @@ exports.getTodayAndUpcomingAppointmentsCount = async (req, res) => {
       upcoming,
       completed,
       rescheduled,
+      scheduled,
       cancelled,
       active,
       total
@@ -366,6 +371,7 @@ exports.getTodayAndUpcomingAppointmentsCount = async (req, res) => {
       appointmentModel.countDocuments(upcomingQuery),
       appointmentModel.countDocuments(completedQuery),
       appointmentModel.countDocuments(rescheduledQuery),
+      appointmentModel.countDocuments(scheduledQuery),
       appointmentModel.countDocuments(cancelledQuery),
       appointmentModel.countDocuments(activeQuery),
       appointmentModel.countDocuments(totalQuery)
@@ -378,6 +384,7 @@ exports.getTodayAndUpcomingAppointmentsCount = async (req, res) => {
         upcoming,
         completed,
         rescheduled,
+        scheduled,
         cancelled,
         active,
         total
