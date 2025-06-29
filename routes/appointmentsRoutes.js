@@ -1,6 +1,18 @@
 const express = require('express');
 const router = express.Router();
-const { createAppointment, createDoctorSlots, getAppointmentsWithPayments, getAllAppointments,getAppointmentTypeCounts,getTodayAndUpcomingAppointmentsCount,getUniquePatientsStats,getTopDoctorsByAppointmentCount } = require('../controllers/appointmentsController');
+const {
+  createAppointment,
+  createDoctorSlots,
+  getAppointmentsWithPayments,
+  getAllAppointments,
+  getAppointmentTypeCounts,
+  getTodayAndUpcomingAppointmentsCount,
+  getUniquePatientsStats,
+  getTopDoctorsByAppointmentCount,
+  cancelAppointment,
+  rescheduleAppointment,
+  updateAppointmentById
+} = require('../controllers/appointmentsController');
 
 router.post('/createAppointment', createAppointment);
 router.post('/createDoctorSlots', createDoctorSlots);
@@ -11,5 +23,9 @@ router.get('/getTodayAndUpcomingAppointmentsCount', getTodayAndUpcomingAppointme
 
 router.get('/getUniquePatientsStats', getUniquePatientsStats);
 router.get('/getTopDoctorsByAppointmentCount', getTopDoctorsByAppointmentCount);
+
+router.post('/cancelAppointment', cancelAppointment);
+router.post('/rescheduleAppointment', rescheduleAppointment);
+router.post('/updateAppointmentById', updateAppointmentById);
 
 module.exports = router;

@@ -39,7 +39,26 @@ async function getAppointmentPayments(authHeader, bodyParams) {
   }
 }
 
+async function updatePayment(authHeader, bodyParams) {
+  try {
+    const response = await axios.put(
+      `${FINANCE_SERVICE_BASE_URL}/finance/updatePaymentByAppointment`,
+      bodyParams,
+      {
+        headers: {
+          Authorization: authHeader
+        }
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.log('Error calling Payment Service:', error.message);
+    throw new Error('Unable to fetch payment');
+  }
+}
+
 module.exports = {
   createPayment,
-  getAppointmentPayments
+  getAppointmentPayments,
+  updatePayment
 };

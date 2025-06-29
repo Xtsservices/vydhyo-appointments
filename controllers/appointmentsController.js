@@ -6,7 +6,7 @@ const doctorSlotSchema = require('../schemas/doctorSlotsSchema');
 const { SEQUENCE_PREFIX } = require('../utils/constants');
 const generateSlots = require('../utils/generateTimeSlots');
 const { getUserById, getUserDetailsBatch } = require('../services/userService');
-const { createPayment, getAppointmentPayments } = require('../services/paymentService');
+const { createPayment, getAppointmentPayments, updatePayment } = require('../services/paymentService');
 const moment = require('moment-timezone');
 const { parseFlexibleDate } = require('../utils/utils');
 
@@ -254,7 +254,6 @@ exports.getAppointmentsWithPayments = async (req, res) => {
   }
 };
 
-
 async function bookSlot(doctorId, date, time, appointmentId) {
   const result = await DoctorSlotModel.updateOne(
     { doctorId, date, "slots.time": time, "slots.status": "available" },
@@ -377,7 +376,7 @@ console.log({ todayStart, todayEnd, tomorrowStart, doctorId });
       appointmentModel.countDocuments(activeQuery),
       appointmentModel.countDocuments(totalQuery)
     ]);
-    
+
     res.json({
       status: 'success',
       data: {
@@ -482,3 +481,273 @@ exports.getTopDoctorsByAppointmentCount = async (req, res) => {
   }
 };
 
+exports.cancelAppointment = async (req, res) => {
+  const { appointmentId, reason } = req.body;
+  if (!appointmentId) {
+    return res.status(400).json({ status: 'fail', message: "appointmentId is required" });
+  }
+  if (!reason) {
+    return res.status(400).json({ status: 'fail', message: "Cancellation reason is required" });
+  }
+
+  try {
+    const appointment = await appointmentModel.findOne({ "appointmentId": appointmentId });
+    if (!appointment) {
+      return res.status(404).json({ status: 'fail', message: "Appointment not found" });
+    }
+
+    // Only cancel if not already cancelled or completed
+    if (['cancelled', 'completed'].includes(appointment.appointmentStatus)) {
+      return res.status(400).json({ status: 'fail', message: `Cannot cancel appointment already marked as ${appointment.appointmentStatus}` });
+    }
+
+    // Can uncomment this block if you want to prevent cancellation of past appointments
+    // const appointmentDateTime = moment.tz(
+    //   `${moment(appointment.appointmentDate).format('YYYY-MM-DD')} ${appointment.appointmentTime}`,
+    //   'YYYY-MM-DD HH:mm',
+    //   'Asia/Kolkata'
+    // );
+    // if (appointmentDateTime.isSameOrBefore(moment.tz('Asia/Kolkata'))) {
+    //   return res.status(400).json({
+    //     status: 'fail',
+    //     message: 'Cannot cancel past appointments'
+    //   });
+    // }
+
+    // Fetch associated payment
+    const payment = await updatePayment(req.headers.authorization, {
+      appointmentId: appointment.appointmentId,
+      status: 'refund_pending'
+    });
+
+    const updateAppointment = await appointmentModel.findOneAndUpdate(
+      { "appointmentId": appointmentId },
+      {
+        $set: {
+          appointmentStatus: 'cancelled',
+          cancellationReason: reason,
+          updatedBy: req.headers ? req.headers.userid : '',
+          updatedAt: new Date()
+        }
+      },
+      { new: true }
+    );
+    if (!updateAppointment) {
+      return res.status(404).json({ status: 'fail', message: "Failed to cancel appointment" });
+    }
+    return res.status(200).json({
+      status: 'success',
+      message: 'Appointment cancelled successfully',
+      appointmentDetails: appointment,
+      paymentDetails: payment.data || null
+    });
+
+  } catch (err) {
+    console.error("Cancel Appointment Error:", err);
+    return res.status(500).json({ status: 'fail', message: 'Internal server error' });
+  }
+};
+
+exports.rescheduleAppointment = async (req, res) => {
+  const { appointmentId, newDate, newTime, reason } = req.body;
+  if (!appointmentId || !newDate || !newTime) {
+    return res.status(400).json({ status: 'fail', message: "appointmentId, newDate and newTime are required" });
+  }
+  const rescheduleDateTime = moment.tz(
+    `${moment(newDate).format('YYYY-MM-DD')} ${newTime}`,
+    'YYYY-MM-DD HH:mm',
+    'Asia/Kolkata'
+  );
+  if (rescheduleDateTime.isSameOrBefore(moment.tz('Asia/Kolkata'))) {
+    return res.status(400).json({
+      status: 'fail',
+      message: 'Cannot reschedule past date and time'
+    });
+  }
+
+  try {
+    const appointment = await appointmentModel.findOne({ "appointmentId": appointmentId });
+    if (!appointment) {
+      return res.status(404).json({ status: 'fail', message: "Appointment not found" });
+    }
+
+    // Only reschedule if not already cancelled or completed
+    if (['cancelled', 'completed'].includes(appointment.appointmentStatus)) {
+      return res.status(400).json({ status: 'fail', message: `Cannot reschedule appointment already marked as ${appointment.appointmentStatus}` });
+    }
+
+    // Can uncomment this block if you want to prevent rescheduling of past appointments
+    // const appointmentDateTime = moment.tz(
+    //   `${moment(appointment.appointmentDate).format('YYYY-MM-DD')} ${appointment.appointmentTime}`,
+    //   'YYYY-MM-DD HH:mm',
+    //   'Asia/Kolkata'
+    // );
+    // if (appointmentDateTime.isSameOrBefore(moment.tz('Asia/Kolkata'))) {
+    //   return res.status(400).json({
+    //     status: 'fail',
+    //     message: 'Cannot reschedule past appointments'
+    //   });
+    // }
+
+    // Check if the new slot is available
+    const checkSlotAvailable = await appointmentModel.find({
+      "doctorId": appointment.doctorId,
+      "appointmentDate": new Date(newDate),
+      "appointmentTime": newTime,
+      "appointmentStatus": { $in: ["pending", "scheduled"] }
+    });
+
+    if (checkSlotAvailable.length > 0) {
+      return res.status(208).json({
+        status: 'fail',
+        message: 'Slot already booked for this date and time',
+      });
+    }
+
+    // Update the appointment with the new date and time
+    const updateAppointment = await appointmentModel.findOneAndUpdate(
+      { "appointmentId": appointmentId },
+      {
+        $set: {
+          appointmentDate: new Date(newDate),
+          appointmentTime: newTime,
+          updatedBy: req.headers ? req.headers.userid : '',
+          updatedAt: new Date()
+        },
+        $push: {
+          rescheduleHistory: {
+            previousDate: appointment.appointmentDate,
+            previousTime: appointment.appointmentTime,
+            rescheduledDate: new Date(newDate),
+            rescheduledTime: newTime,
+            reason: reason || null,
+          }
+        }
+      },
+      { new: true }
+    );
+    if (!updateAppointment) {
+      return res.status(404).json({ status: 'fail', message: "Failed to reschedule appointment" });
+    }
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Appointment rescheduled successfully',
+      appointmentDetails: updateAppointment
+    });
+  }
+  catch (err) {
+    console.error("Reschedule Appointment Error:", err);
+    return res.status(500).json({ status: 'fail', message: 'Internal server error' });
+  }
+}
+
+exports.completeAppointment = async (req, res) => {
+  const { appointmentId, appointmentNotes = '' } = req.body;
+  if (!appointmentId) {
+    return res.status(400).json({ status: 'fail', message: "appointmentId is required" });
+  }
+
+  try {
+    const appointment = await appointmentModel.findOne({ "appointmentId": appointmentId });
+    if (!appointment) {
+      return res.status(404).json({ status: 'fail', message: "Appointment not found" });
+    }
+
+    // Only complete if not already cancelled or completed
+    if (['cancelled', 'completed'].includes(appointment.appointmentStatus)) {
+      return res.status(400).json({ status: 'fail', message: `Cannot complete appointment already marked as ${appointment.appointmentStatus}` });
+    }
+
+    const updateAppointment = await appointmentModel.findOneAndUpdate(
+      { "appointmentId": appointmentId },
+      {
+        $set: {
+          appointmentStatus: 'completed',
+          appointmentNotes: appointmentNotes,
+          updatedBy: req.headers ? req.headers.userid : '',
+          updatedAt: new Date()
+        }
+      },
+      { new: true }
+    );
+    if (!updateAppointment) {
+      return res.status(404).json({ status: 'fail', message: "Failed to complete appointment" });
+    }
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Appointment completed successfully',
+      appointmentDetails: updateAppointment
+    });
+
+  } catch (err) {
+    console.error("Complete Appointment Error:", err);
+    return res.status(500).json({ status: 'fail', message: 'Internal server error' });
+  }
+}
+
+exports.updateAppointmentById = async (req, res) => {
+  const { appointmentId, ...updateData } = req.body;
+
+  if (!appointmentId) {
+    return res.status(400).json({ status: 'fail', message: "appointmentId is required" });
+  }
+
+  // Allowed fields for normal updates
+  const allowedFields = [
+    "appointmentReason",
+    "appointmentNotes"
+  ];
+
+  try {
+    const appointment = await appointmentModel.findOne({ appointmentId });
+    if (!appointment) {
+      return res.status(404).json({ status: 'fail', message: "Appointment not found" });
+    }
+
+    let filteredUpdateData = {};
+
+    const allowedIfFinal = ["appointmentNotes", "appointmentReason"];
+
+    for (const key of allowedIfFinal) {
+      if (key in updateData) {
+        filteredUpdateData[key] = updateData[key];
+      }
+    }
+
+    // If trying to update other fields → block
+    const extraKeys = Object.keys(updateData).filter(k => !allowedIfFinal.includes(k));
+    if (extraKeys.length > 0) {
+      return res.status(400).json({
+        status: 'fail',
+        message: `Cannot update fields ${extraKeys.join(', ')} for a ${appointment.appointmentStatus} appointment`
+      });
+    }
+
+    const updatedAppointment = await appointmentModel.findOneAndUpdate(
+      { appointmentId },
+      {
+        $set: {
+          ...filteredUpdateData,
+          updatedBy: req.headers?.userid || '',
+          updatedAt: new Date()
+        }
+      },
+      { new: true }
+    );
+
+    if (!updatedAppointment) {
+      return res.status(404).json({ status: 'fail', message: "Failed to update appointment" });
+    }
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Appointment updated successfully',
+      appointmentDetails: updatedAppointment
+    });
+
+  } catch (err) {
+    return res.status(500).json({ status: 'fail', message: `Internal server error: ${err.message}` });
+  }
+};
