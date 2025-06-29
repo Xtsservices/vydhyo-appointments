@@ -11,7 +11,8 @@ const {
   getTopDoctorsByAppointmentCount,
   cancelAppointment,
   rescheduleAppointment,
-  updateAppointmentById
+  updateAppointmentById,
+  completeAppointment
 } = require('../controllers/appointmentsController');
 
 router.post('/createAppointment', createAppointment);
@@ -26,6 +27,7 @@ router.get('/getTopDoctorsByAppointmentCount', getTopDoctorsByAppointmentCount);
 
 router.post('/cancelAppointment', cancelAppointment);
 router.post('/rescheduleAppointment', rescheduleAppointment);
+router.post('/completeAppointment', completeAppointment);
 router.post('/updateAppointmentById', updateAppointmentById);
 
 module.exports = router;
