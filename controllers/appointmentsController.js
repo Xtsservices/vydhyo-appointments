@@ -35,6 +35,7 @@ exports.createAppointment = async (req, res) => {
       "appointmentTime": req.body.appointmentTime,
       "appointmentStatus": { $in: ["pending", "scheduled"] }
     });
+    console.log('checkSlotAvaliable', checkSlotAvaliable);
 
     if (checkSlotAvaliable.length > 0) {
       return res.status(208).json({
@@ -749,5 +750,154 @@ exports.updateAppointmentById = async (req, res) => {
 
   } catch (err) {
     return res.status(500).json({ status: 'fail', message: `Internal server error: ${err.message}` });
+  }
+};
+
+
+exports.getTodayAppointmentCount = async (req, res) => {
+  const doctorId = req.headers.userid;
+  try {
+    // Get today's and yesterday's dates in IST
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // Set to midnight IST
+    const tomorrow = new Date(today);
+    tomorrow.setDate(today.getDate() + 1);
+    const yesterday = new Date(today);
+    yesterday.setDate(today.getDate() - 1);
+
+    // Today's stats
+    const todaysAppointments = await appointmentModel.find({
+      doctorId,
+      appointmentDate: {
+        $gte: today,
+        $lt: tomorrow
+      }
+    });
+
+    // Yesterday's stats
+    const yesterdaysAppointments = await appointmentModel.find({
+      doctorId,
+      appointmentDate: {
+        $gte: yesterday,
+        $lt: today
+      }
+    });
+
+    // 1. Today's total appointments count (new + followup)
+    const totalAppointmentsToday = todaysAppointments.length;
+
+    // 2. New appointments count (New-Walkin or New-Homecare)
+    const newAppointmentsToday = todaysAppointments.filter(app =>
+      app.appointmentType.toLowerCase() === 'new-walkin' ||
+      app.appointmentType.toLowerCase() === 'new-homecare'
+    ).length;
+
+    // 3. Follow-up appointments count (Followup-Walkin, Followup-Video, Followup-Homecare)
+    const followupAppointmentsToday = todaysAppointments.filter(app =>
+      app.appointmentType.toLowerCase() === 'followup-walkin' ||
+      app.appointmentType.toLowerCase() === 'followup-video' ||
+      app.appointmentType.toLowerCase() === 'followup-homecare'
+    ).length;
+
+    // Yesterday's counts for percentage calculation
+    const totalAppointmentsYesterday = yesterdaysAppointments.length;
+    const newAppointmentsYesterday = yesterdaysAppointments.filter(app =>
+      app.appointmentType.toLowerCase() === 'new-walkin' ||
+      app.appointmentType.toLowerCase() === 'new-homecare'
+    ).length;
+    const followupAppointmentsYesterday = yesterdaysAppointments.filter(app =>
+      app.appointmentType.toLowerCase() === 'followup-walkin' ||
+      app.appointmentType.toLowerCase() === 'followup-video' ||
+      app.appointmentType.toLowerCase() === 'followup-homecare'
+    ).length;
+
+    // Calculate percentage change
+    const calculatePercentageChange = (todayCount, yesterdayCount) => {
+      if (yesterdayCount === 0) {
+        return todayCount > 0 ? 100 : 0;
+      }
+      return ((todayCount - yesterdayCount) / yesterdayCount * 100).toFixed(2);
+    };
+
+    const totalPercentageChange = calculatePercentageChange(totalAppointmentsToday, totalAppointmentsYesterday);
+    const newPercentageChange = calculatePercentageChange(newAppointmentsToday, newAppointmentsYesterday);
+    const followupPercentageChange = calculatePercentageChange(followupAppointmentsToday, followupAppointmentsYesterday);
+
+    // Format date in IST (YYYY-MM-DD)
+    const formatDate = (date) => {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0'); // Months are 0-based
+      const day = String(date.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+
+    // Prepare result
+    const result = {
+      doctorId,
+      date: formatDate(today), // Use local date formatting
+      totalAppointments: {
+        today: totalAppointmentsToday,
+        percentageChange: parseFloat(totalPercentageChange)
+      },
+      newAppointments: {
+        today: newAppointmentsToday,
+        percentageChange: parseFloat(newPercentageChange)
+      },
+      followupAppointments: {
+        today: followupAppointmentsToday,
+        percentageChange: parseFloat(followupPercentageChange)
+      }
+    };
+
+    console.log(JSON.stringify(result, null, 2));
+    return res.status(200).json({ status: 'success', data: result });
+
+  } catch (err) {
+    return res.status(500).json({ status: 'fail', message: `Internal server error: ${err.message}` });
+  }
+};
+
+
+exports.getAppointmentsByDoctorID = async (req, res) => {
+  try {
+    const doctorId = req.headers.userid;
+    const { type } = req.params;
+     const { date } = req.query;
+
+    // Validate doctorId
+    if (!doctorId) {
+      return res.status(400).json({
+        status: "fail",
+        message: "Doctor ID is required in headers"
+      });
+    }
+
+    // Build query
+    const query = { doctorId, isDeleted: { $ne: true } };
+    if (type === 'appointment') {
+      query.appointmentStatus = 'scheduled';
+    }
+
+    if (date) {
+      const startOfDay = moment.tz(date, 'YYYY-MM-DD', 'Asia/Kolkata').startOf('day').toDate();
+      const endOfDay = moment.tz(date, 'YYYY-MM-DD', 'Asia/Kolkata').endOf('day').toDate();
+      query.appointmentDate = { $gte: startOfDay, $lte: endOfDay };
+    }
+
+    // Find appointments
+    const appointments = await appointmentModel.find(query).sort({ appointmentDate: -1 });
+
+    return res.status(200).json({
+      status: "success",
+      message: "Appointments retrieved successfully",
+      data: appointments
+    });
+
+  } catch (error) {
+    console.error("Error in getAppointmentsByDoctorID:", error);
+    return res.status(500).json({
+      status: "fail",
+      message: error.message || "Internal server error"
+    });
   }
 };
