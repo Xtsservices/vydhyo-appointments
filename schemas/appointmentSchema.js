@@ -3,7 +3,6 @@ const Joi = require('joi');
 const appointmentSchema = Joi.object({
     userId: Joi.string().required(),
     doctorId: Joi.string().required(),
-    patientID: Joi.string().required(),
     patientName: Joi.string().allow(null, ''),
     doctorName: Joi.string().allow(null, ''),
     appointmentType: Joi.string().required(),
@@ -23,8 +22,7 @@ const appointmentSchema = Joi.object({
         .required(),
     amount: Joi.number().min(0).required(),
     discount: Joi.number().min(0).default(0),
-    discountType: Joi.string().valid('percentage', 'flat').default('flat'),
-finalAmount :Joi.number().min(0).required(),
+    discountType: Joi.string().valid('percentage', 'flat').default('flat')
 });
 
 module.exports = appointmentSchema;
