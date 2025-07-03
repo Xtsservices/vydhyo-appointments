@@ -4,6 +4,7 @@ const axios = require('axios');
 const FINANCE_SERVICE_BASE_URL = process.env.FINANCE_SERVICE_URL;
 
 async function createPayment(authHeader, bodyParams) {
+  console.log('Creating payment with params:', bodyParams);
   try {
     const response = await axios.post(
       `${FINANCE_SERVICE_BASE_URL}/finance/createPayment`,
@@ -14,6 +15,8 @@ async function createPayment(authHeader, bodyParams) {
         }
       }
     );
+    console.log('Response from Payment Service:', response);
+    console.log('Payment created successfully:', response.data);
     return response.data;
   } catch (error) {
     console.log('Error calling Payment Service:', error.message);
