@@ -65,7 +65,7 @@ exports.createAppointment = async (req, res) => {
         discount: req.body.discount || 0,
         discountType: req.body.discountType,
         finalAmount: req.body.finalAmount,
-        paymentStatus: 'success'
+        paymentStatus: 'paid'
       });
 
       if (!paymentResponse || paymentResponse.status !== 'success') {
