@@ -35,7 +35,6 @@ exports.createAppointment = async (req, res) => {
       "appointmentTime": req.body.appointmentTime,
       "appointmentStatus": { $in: ["pending", "scheduled"] }
     });
-    console.log('checkSlotAvaliable', checkSlotAvaliable);
 
     if (checkSlotAvaliable.length > 0) {
       return res.status(208).json({
@@ -53,10 +52,8 @@ exports.createAppointment = async (req, res) => {
     req.body.appointmentId = SEQUENCE_PREFIX.APPOINTMENTS_SEQUENCE.SEQUENCE.concat(appointmentCounter.seq);
     const appointment = await appointmentModel.create(req.body);
     let paymentResponse = { status: 'pending' };
-      console.log("pay start")
 
     if (req.body.paymentStatus === 'paid') {
-      console.log("pay start2")
       paymentResponse = await createPayment(req.headers.authorization, {
         userId: req.body.userId,
         doctorId: req.body.doctorId,
