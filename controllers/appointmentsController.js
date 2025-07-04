@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const appointmentModel = require('../models/appointmentsModel');
 const sequenceSchema = require('../sequence/sequenceSchema');
 const appointmentSchema = require('../schemas/appointmentSchema');
@@ -12,6 +13,7 @@ const { parseFlexibleDate } = require('../utils/utils');
 
 exports.createAppointment = async (req, res) => {
   try {
+    // Step 1: Validate Input
     const { error } = appointmentSchema.validate(req.body);
     if (error) {
       return res.status(400).json({
@@ -19,86 +21,111 @@ exports.createAppointment = async (req, res) => {
         message: error.details[0].message,
       });
     }
-    const appointmentDateTime = moment.tz(`${req.body.appointmentDate} ${req.body.appointmentTime}`, 'YYYY-MM-DD HH:mm', 'Asia/Kolkata');
+
+    // Step 2: Check appointment time validity
+    const appointmentDateTime = moment.tz(
+      `${req.body.appointmentDate} ${req.body.appointmentTime}`,
+      'YYYY-MM-DD HH:mm',
+      'Asia/Kolkata'
+    );
     const now = moment.tz('Asia/Kolkata');
 
     if (appointmentDateTime.isBefore(now)) {
       return res.status(208).json({
         status: 'fail',
-        message: 'Appointment date & time must not be in the past.'
+        message: 'Appointment date & time must not be in the past.',
       });
     }
 
-    const checkSlotAvaliable = await appointmentModel.find({
-      "doctorId": req.body.doctorId,
-      "appointmentDate": new Date(req.body.appointmentDate),
-      "appointmentTime": req.body.appointmentTime,
-      "appointmentStatus": { $in: ["pending", "scheduled"] }
+    // Step 3: Check if slot is already booked
+    const checkSlotAvailable = await appointmentModel.find({
+      doctorId: req.body.doctorId,
+      appointmentDate: new Date(req.body.appointmentDate),
+      appointmentTime: req.body.appointmentTime,
+      appointmentStatus: { $in: ['pending', 'scheduled'] },
     });
-    console.log('checkSlotAvaliable', checkSlotAvaliable);
 
-    if (checkSlotAvaliable.length > 0) {
+    if (checkSlotAvailable.length > 0) {
       return res.status(208).json({
         status: 'fail',
         message: 'Slot already booked for this date and time',
       });
     }
-    req.body.createdBy = req.headers ? req.headers.userid : null;
-    req.body.updatedBy = req.headers ? req.headers.userid : null;
 
-    const appointmentCounter = await sequenceSchema.findByIdAndUpdate({
-      _id: SEQUENCE_PREFIX.APPOINTMENTS_SEQUENCE.APPOINTMENTS_MODEL
-    }, { $inc: { seq: 1 } }, { new: true, upsert: true });
+    // Step 4: Generate appointmentId first (before calling payment API)
+    const appointmentCounter = await sequenceSchema.findByIdAndUpdate(
+      { _id: SEQUENCE_PREFIX.APPOINTMENTS_SEQUENCE.APPOINTMENTS_MODEL },
+      { $inc: { seq: 1 } },
+      { new: true, upsert: true }
+    );
 
-    req.body.appointmentId = SEQUENCE_PREFIX.APPOINTMENTS_SEQUENCE.SEQUENCE.concat(appointmentCounter.seq);
-    const appointment = await appointmentModel.create(req.body);
+    const appointmentId = SEQUENCE_PREFIX.APPOINTMENTS_SEQUENCE.SEQUENCE.concat(appointmentCounter.seq);
+
+    // Step 5: Call payment API (with appointmentId)
     let paymentResponse = { status: 'pending' };
-      console.log("pay start")
 
     if (req.body.paymentStatus === 'paid') {
-      console.log("pay start2")
       paymentResponse = await createPayment(req.headers.authorization, {
         userId: req.body.userId,
         doctorId: req.body.doctorId,
-        appointmentId: req.body.appointmentId,
+        appointmentId: appointmentId,
         actualAmount: req.body.amount,
         discount: req.body.discount || 0,
         discountType: req.body.discountType,
         finalAmount: req.body.finalAmount,
-        paymentStatus: 'paid'
+        paymentStatus: 'paid',
+        paymentFrom: 'appointment',
       });
 
       if (!paymentResponse || paymentResponse.status !== 'success') {
         return res.status(500).json({
           status: 'fail',
-          message: 'Payment failed, please try again later.',
+          message: 'Payment failed, appointment not created.',
         });
       }
     }
-    const updateAppointment = await appointmentModel.findByIdAndUpdate(
+
+    // Step 6: Create appointment in DB (no transaction)
+    req.body.createdBy = req.headers?.userid || null;
+    req.body.updatedBy = req.headers?.userid || null;
+    req.body.appointmentId = appointmentId;
+
+    const appointment = await appointmentModel.create(req.body);
+
+    const updatedAppointment = await appointmentModel.findByIdAndUpdate(
       appointment._id,
       { appointmentStatus: 'scheduled' },
       { new: true }
     );
-    if (!appointment) {
+
+    if (!updatedAppointment) {
       return res.status(404).json({
         status: 'fail',
-        message: 'appointment not created',
+        message: 'Appointment not created',
       });
     }
 
     return res.status(200).json({
       status: 'success',
-      message: 'appointment created successfully',
+      message: 'Appointment created successfully',
       data: {
-        appointmentDetails: updateAppointment,
-        paymentDetails: paymentResponse.data
+        appointmentDetails: updatedAppointment,
+        paymentDetails: paymentResponse.data,
       }
     });
+
   } catch (error) {
-    res.status(500).json({ message: 'Error creating appointment', error: error.message });
+    return res.status(500).json({
+      message: 'Error creating appointment',
+      error: error.message,
+    });
   }
 };
+
+
+
+
+
 
 //getAllAppointmentCount
 exports.getAllAppointments = async (req, res) => {
