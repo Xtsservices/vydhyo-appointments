@@ -615,6 +615,7 @@ exports.rescheduleAppointment = async (req, res) => {
         $set: {
           appointmentDate: new Date(newDate),
           appointmentTime: newTime,
+          appointmentStatus: "rescheduled",
           updatedBy: req.headers ? req.headers.userid : '',
           updatedAt: new Date()
         },
@@ -877,8 +878,13 @@ exports.getAppointmentsByDoctorID = async (req, res) => {
 
     // Build query
     const query = { doctorId, isDeleted: { $ne: true } };
+    // if (type === 'appointment') {
+    //   query.appointmentStatus = 'scheduled';
+    // }
     if (type === 'appointment') {
-      query.appointmentStatus = 'scheduled';
+      query.appointmentStatus = { $in: ['scheduled', 'rescheduled', 'cancelled'] };
+    } else {
+      query.appointmentStatus = 'completed';
     }
 
     if (date) {
