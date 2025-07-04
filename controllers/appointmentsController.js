@@ -642,6 +642,7 @@ exports.rescheduleAppointment = async (req, res) => {
         $set: {
           appointmentDate: new Date(newDate),
           appointmentTime: newTime,
+          appointmentStatus: "rescheduled",
           updatedBy: req.headers ? req.headers.userid : '',
           updatedAt: new Date()
         },
@@ -905,7 +906,9 @@ exports.getAppointmentsByDoctorID = async (req, res) => {
     // Build query
     const query = { doctorId, isDeleted: { $ne: true } };
     if (type === 'appointment') {
-      query.appointmentStatus = 'scheduled';
+      query.appointmentStatus = { $in: ['scheduled', 'rescheduled', 'cancelled'] };
+    } else {
+      query.appointmentStatus = 'completed';
     }
 
     if (date) {
@@ -914,6 +917,40 @@ exports.getAppointmentsByDoctorID = async (req, res) => {
       query.appointmentDate = { $gte: startOfDay, $lte: endOfDay };
     }
 
+    // Find appointments
+    const appointments = await appointmentModel.find(query).sort({ appointmentDate: -1 });
+
+    return res.status(200).json({
+      status: "success",
+      message: "Appointments retrieved successfully",
+      data: appointments
+    });
+
+  } catch (error) {
+    console.error("Error in getAppointmentsByDoctorID:", error);
+    return res.status(500).json({
+      status: "fail",
+      message: error.message || "Internal server error"
+    });
+  }
+};
+
+
+exports.getAppointmentsCountByDoctorID = async (req, res) => {
+  try {
+    const doctorId = req.headers.userid;
+
+    // Validate doctorId
+    if (!doctorId) {
+      return res.status(400).json({
+        status: "fail",
+        message: "Doctor ID is required in headers"
+      });
+    }
+
+    // Build query
+    const query = { doctorId, isDeleted: { $ne: true } };
+    query.appointmentStatus = { $in: ['scheduled', 'rescheduled', 'cancelled', 'completed'] };
     // Find appointments
     const appointments = await appointmentModel.find(query).sort({ appointmentDate: -1 });
 
