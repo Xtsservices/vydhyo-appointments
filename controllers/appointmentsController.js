@@ -968,3 +968,26 @@ exports.getAppointmentsCountByDoctorID = async (req, res) => {
     });
   }
 };
+
+
+
+exports.getAppointment = async (req, res) => {
+  try {
+
+    let appointmentId=req.query?.appointmentId
+
+    const appointment = await appointmentModel.findOne({appointmentId:appointmentId});
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Appointment retrieved successfully',
+      data: appointment
+    });
+  } catch (error) {
+    return res.status(500).json({
+      status: 'fail',
+      message: 'Error retrieving appointment',
+      error: error.message,
+    });
+  }
+};
