@@ -786,7 +786,7 @@ exports.updateAppointmentById = async (req, res) => {
 
 
 exports.getTodayAppointmentCount = async (req, res) => {
-  const doctorId = req.headers.userid;
+  const doctorId = req.query.doctorId || req.headers.userid;
   try {
     // Get today's and yesterday's dates in IST
     const today = new Date();
@@ -891,7 +891,7 @@ exports.getTodayAppointmentCount = async (req, res) => {
 
 exports.getAppointmentsByDoctorID = async (req, res) => {
   try {
-    const doctorId = req.headers.userid;
+    const doctorId = req.query.doctorId ||req.headers.userid ;
     const { type } = req.params;
      const { date } = req.query;
 
@@ -938,7 +938,7 @@ exports.getAppointmentsByDoctorID = async (req, res) => {
 
 exports.getAppointmentsCountByDoctorID = async (req, res) => {
   try {
-    const doctorId = req.headers.userid;
+    const doctorId = req.query.doctorId ||req.headers.userid;
 
     // Validate doctorId
     if (!doctorId) {
