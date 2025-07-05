@@ -907,7 +907,11 @@ exports.getAppointmentsByDoctorID = async (req, res) => {
     const query = { doctorId, isDeleted: { $ne: true } };
     if (type === 'appointment') {
       query.appointmentStatus = { $in: ['scheduled', 'rescheduled', 'cancelled'] };
-    } else {
+    } 
+    else if (type === 'dashboardAppointment'){
+      query.appointmentStatus = { $in: ['scheduled', 'rescheduled', 'cancelled', 'completed'] };
+    }
+    else {
       query.appointmentStatus = 'completed';
     }
 
