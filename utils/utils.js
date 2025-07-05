@@ -17,3 +17,12 @@ exports.parseFlexibleDate = (dateStr) => {
   const parsed = new Date(dateStr);
   return isNaN(parsed.getTime()) ? null : parsed;
 }
+
+
+exports.sortSlotsByTime = (slots) => {
+  return slots.sort((a, b) => {
+    const [aHour, aMin] = a.time.split(':').map(Number);
+    const [bHour, bMin] = b.time.split(':').map(Number);
+    return aHour !== bHour ? aHour - bHour : aMin - bMin;
+  });
+}
