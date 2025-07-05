@@ -4,7 +4,7 @@ const slotSchema = new mongoose.Schema({
   time: { type: String, required: true },
   status: {
     type: String,
-    enum: ['available', 'booked', 'blocked'],
+    enum: ['available', 'unavailable', 'booked', 'blocked'],
     default: 'available'
   },
   appointmentId: { type: String, default: null }
