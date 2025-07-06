@@ -15,7 +15,8 @@ const {
   completeAppointment,
   getTodayAppointmentCount,
   getAppointmentsByDoctorID,
-  getAppointmentsCountByDoctorID
+  getAppointmentsCountByDoctorID,
+  getAppointment
 } = require('../controllers/appointmentsController');
 
 router.post('/createAppointment', createAppointment);
@@ -37,6 +38,7 @@ router.get('/getTodayAppointmentCount', getTodayAppointmentCount);
 router.get('/getAppointmentsByDoctorID/:type', getAppointmentsByDoctorID);
 router.get('/getAppointmentsCountByDoctorID', getAppointmentsCountByDoctorID);
 
+router.get('/getAppointment', getAppointment);
 
 
 module.exports = router;
