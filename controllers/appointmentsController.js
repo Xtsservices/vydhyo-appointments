@@ -10,6 +10,7 @@ const { getUserById, getUserDetailsBatch } = require('../services/userService');
 const { createPayment, getAppointmentPayments, updatePayment } = require('../services/paymentService');
 const moment = require('moment-timezone');
 const { parseFlexibleDate } = require('../utils/utils');
+const axios = require('axios'); // Add axios for making HTTP requests
 
 exports.createAppointment = async (req, res) => {
   try {
@@ -163,7 +164,7 @@ exports.createDoctorSlots = async (req, res) => {
       });
     }
     const userDetails = await getUserById(doctorId, req.headers.authorization);
-    console.log('User Details:', userDetails);
+    // console.log('User Details:', userDetails);
     return;
     const slots = generateSlots();
     req.body.slots = slots;
@@ -368,8 +369,8 @@ exports.getTodayAndUpcomingAppointmentsCount = async (req, res) => {
     if (doctorId) baseQuery.userId = doctorId;
 
 
-    console.log('--- Dates ---');
-console.log({ todayStart, todayEnd, tomorrowStart, doctorId });
+    // console.log('--- Dates ---');
+// console.log({ todayStart, todayEnd, tomorrowStart, doctorId });
     // Date-based counts
     const todayQuery = {
       ...baseQuery,
@@ -880,7 +881,7 @@ exports.getTodayAppointmentCount = async (req, res) => {
       }
     };
 
-    console.log(JSON.stringify(result, null, 2));
+    // console.log(JSON.stringify(result, null, 2));
     return res.status(200).json({ status: 'success', data: result });
 
   } catch (err) {
@@ -889,7 +890,7 @@ exports.getTodayAppointmentCount = async (req, res) => {
 };
 
 
-exports.getAppointmentsByDoctorID = async (req, res) => {
+exports.getAppointmentsByDoctorID2 = async (req, res) => {
   try {
     const doctorId = req.query.doctorId ||req.headers.userid ;
     const { type } = req.params;
@@ -939,6 +940,92 @@ exports.getAppointmentsByDoctorID = async (req, res) => {
   }
 };
 
+exports.getAppointmentsByDoctorID = async (req, res) => {
+  try {
+    const doctorId = req.query.doctorId || req.headers.userid;
+    const { type } = req.params;
+    const { date } = req.query;
+
+    // Validate doctorId
+    if (!doctorId) {
+      return res.status(400).json({
+        status: "fail",
+        message: "Doctor ID is required in headers"
+      });
+    }
+
+    // Build query
+    const query = { doctorId, isDeleted: { $ne: true } };
+    if (type === 'appointment') {
+      query.appointmentStatus = { $in: ['scheduled', 'rescheduled', 'cancelled'] };
+    } else if (type === 'dashboardAppointment') {
+      query.appointmentStatus = { $in: ['scheduled', 'rescheduled', 'cancelled', 'completed'] };
+    } else {
+      query.appointmentStatus = 'completed';
+    }
+
+    if (date) {
+      const startOfDay = moment.tz(date, 'YYYY-MM-DD', 'Asia/Kolkata').startOf('day').toDate();
+      const endOfDay = moment.tz(date, 'YYYY-MM-DD', 'Asia/Kolkata').endOf('day').toDate();
+      query.appointmentDate = { $gte: startOfDay, $lte: endOfDay };
+    }
+
+    // Find appointments
+    const appointments = await appointmentModel.find(query).sort({ appointmentDate: -1 });
+
+    // Extract userIds from appointments
+    const userIds = [...new Set(appointments.map(app => app.userId))]; // Unique userIds
+
+    // Fetch user details from User service
+    let users = [];
+    if (userIds.length > 0) {
+      try {
+        const userServiceUrl = process.env.USER_SERVICE_URL || 'http://localhost:4002';
+        const response = await axios.post(`${userServiceUrl}/users/getUsersDetailsByIds`, { userIds }, {
+          headers: {
+            'Content-Type': 'application/json',
+            // Add authorization headers if needed
+            // 'Authorization': `Bearer ${req.headers.authorization}`
+          }
+        });
+        if (response.data.status === 'success') {
+          users = response.data.data;
+        } else {
+          console.error('Failed to fetch user details:', response.data.message);
+        }
+      } catch (error) {
+        console.error('Error fetching user details from User service:', error.message);
+      }
+    }
+
+    // Map appointments with user details
+    const enrichedAppointments = appointments.map(appointment => {
+      const user = users.find(u => u.userId === appointment.userId) || {};
+      return {
+        ...appointment._doc, // Spread appointment document
+        patientDetails: {
+          patientName: appointment.patientName || `${user.firstname || ''} ${user.lastname || ''}`.trim(),
+          dob: user.DOB || null,
+          mobile: user.mobile || null,
+          gender: user.gender || null
+        }
+      };
+    });
+
+    return res.status(200).json({
+      status: "success",
+      message: "Appointments retrieved successfully",
+      data: enrichedAppointments
+    });
+
+  } catch (error) {
+    console.error("Error in getAppointmentsByDoctorID:", error);
+    return res.status(500).json({
+      status: "fail",
+      message: error.message || "Internal server error"
+    });
+  }
+};
 
 exports.getAppointmentsCountByDoctorID = async (req, res) => {
   try {
