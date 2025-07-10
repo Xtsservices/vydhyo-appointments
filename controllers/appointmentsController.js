@@ -65,7 +65,13 @@ exports.createAppointment = async (req, res) => {
     req.body.updatedBy = req.headers?.userid || null;
 
     // step 5.1: Check if the doctor has slots available for the appointment date and time
-    await bookSlot(req);
+    const bookingResult = await bookSlot(req);
+    if (!bookingResult || bookingResult.modifiedCount === 0) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Slot already booked or slots do not exist check in slot availability.'
+      });
+    }
     const appointment = await appointmentModel.create(req.body);
 
     // Step 6: Call payment API (with newly created appointmentId)
@@ -286,10 +292,7 @@ async function bookSlot(req) {
       ]
     }
   );
-
-  if (result.modifiedCount === 0) {
-    throw new Error('Slot already booked or slots do not exist');
-  }
+  return result;
 }
 
 async function cancelSlot(appointment, req) {
@@ -685,7 +688,7 @@ exports.rescheduleAppointment = async (req, res) => {
      * This will set the slot status to 'booked' and set the appointmentId
      */
 
-    await bookSlot({
+    const bookingResult = await bookSlot({
       body: {
         appointmentId: appointmentId,
         doctorId: appointment.doctorId,
@@ -695,6 +698,12 @@ exports.rescheduleAppointment = async (req, res) => {
       },
       headers: req.headers
     });
+    if (!bookingResult || bookingResult.modifiedCount === 0) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Slot already booked or slots do not exist check in slot availability.'
+      });
+    }
     /**
      * Update the appointment with new date and time
      * This will update the appointment date, time and status to 'scheduled'
