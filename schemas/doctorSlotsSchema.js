@@ -11,13 +11,18 @@ const slotSchema = Joi.object({
   status: Joi.string()
     .valid('available', 'booked', 'blocked')
     .default('available'),
-  appointmentId: Joi.string().allow(null).optional()
+  appointmentId: Joi.string().allow(null).optional(),
+  updatedBy: Joi.string().required(),
+  updatedAt: Joi.date().allow(null).optional(),
 });
 
 // DoctorSlot schema
 const doctorSlotSchema = Joi.object({
   doctorId: Joi.string().required().messages({
     'any.required': 'doctorId is required',
+  }),
+  addressId: Joi.string().required().messages({
+    'any.required': 'addressId is required',
   }),
   date: Joi.date().required().messages({
     'any.required': 'date is required',

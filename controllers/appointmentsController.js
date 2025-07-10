@@ -1,12 +1,9 @@
-const mongoose = require('mongoose');
 const appointmentModel = require('../models/appointmentsModel');
 const sequenceSchema = require('../sequence/sequenceSchema');
 const appointmentSchema = require('../schemas/appointmentSchema');
 const DoctorSlotModel = require('../models/doctorSlotsModel');
-const doctorSlotSchema = require('../schemas/doctorSlotsSchema');
 const { SEQUENCE_PREFIX } = require('../utils/constants');
-const generateSlots = require('../utils/generateTimeSlots');
-const { getUserById, getUserDetailsBatch } = require('../services/userService');
+const { getUserDetailsBatch } = require('../services/userService');
 const { createPayment, getAppointmentPayments, updatePayment } = require('../services/paymentService');
 const moment = require('moment-timezone');
 const { parseFlexibleDate } = require('../utils/utils');
@@ -45,10 +42,12 @@ exports.createAppointment = async (req, res) => {
       appointmentStatus: { $in: ['pending', 'scheduled'] },
     });
 
+    // const checkSlotAvailability = await findSlotByDateTime(req.body.doctorId, req.body.appointmentDate, req.body.appointmentTime);
+
     if (checkSlotAvailable.length > 0) {
       return res.status(208).json({
         status: 'fail',
-        message: 'Slot already booked for this date and time',
+        message: 'Slot already booked or unavailable for this date and time',
       });
     }
 
@@ -59,16 +58,24 @@ exports.createAppointment = async (req, res) => {
       { new: true, upsert: true }
     );
 
-    const appointmentId = SEQUENCE_PREFIX.APPOINTMENTS_SEQUENCE.SEQUENCE.concat(appointmentCounter.seq);
+    // Step 5: Create appointment
+    req.body.appointmentId = SEQUENCE_PREFIX.APPOINTMENTS_SEQUENCE.SEQUENCE.concat(appointmentCounter.seq);
+    req.body.createdBy = req.headers?.userid || null;
+    req.body.updatedBy = req.headers?.userid || null;
 
-    // Step 5: Call payment API (with appointmentId)
+    // step 5.1: Check if the doctor has slots available for the appointment date and time
+    await bookSlot(req);
+    const appointment = await appointmentModel.create(req.body);
+
+    // Step 6: Call payment API (with newly created appointmentId)
     let paymentResponse = { status: 'pending' };
 
     if (req.body.paymentStatus === 'paid') {
       paymentResponse = await createPayment(req.headers.authorization, {
         userId: req.body.userId,
         doctorId: req.body.doctorId,
-        appointmentId: appointmentId,
+        addressId: req.body.addressId,
+        appointmentId: req.body.appointmentId,
         actualAmount: req.body.amount,
         discount: req.body.discount || 0,
         discountType: req.body.discountType,
@@ -84,14 +91,7 @@ exports.createAppointment = async (req, res) => {
         });
       }
     }
-
-    // Step 6: Create appointment in DB (no transaction)
-    req.body.createdBy = req.headers?.userid || null;
-    req.body.updatedBy = req.headers?.userid || null;
-    req.body.appointmentId = appointmentId;
-
-    const appointment = await appointmentModel.create(req.body);
-
+    // Step 7: Update appointment status to 'scheduled' after successful payment
     const updatedAppointment = await appointmentModel.findByIdAndUpdate(
       appointment._id,
       { appointmentStatus: 'scheduled' },
@@ -122,11 +122,6 @@ exports.createAppointment = async (req, res) => {
   }
 };
 
-
-
-
-
-
 //getAllAppointmentCount
 exports.getAllAppointments = async (req, res) => {
   try {
@@ -149,51 +144,6 @@ exports.getAllAppointments = async (req, res) => {
     });
   }
 };
-
-exports.createDoctorSlots = async (req, res) => {
-  try {
-    const { doctorId, date } = req.body;
-    const slotDate = new Date(date);
-    const existingSlots = await DoctorSlotModel.findOne({ doctorId, date: slotDate });
-    if (existingSlots) {
-      return res.status(200).json({
-        status: 'success',
-        message: `Slots already created for this date ${date}`,
-        data: existingSlots,
-      });
-    }
-    const userDetails = await getUserById(doctorId, req.headers.authorization);
-    console.log('User Details:', userDetails);
-    return;
-    const slots = generateSlots();
-    req.body.slots = slots;
-    const { error } = doctorSlotSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({
-        status: 'fail',
-        message: error.details[0].message,
-      });
-    }
-    const newSlots = await DoctorSlotModel.create({ doctorId, date: slotDate, slots });
-    if (!newSlots) {
-      return res.status(404).json({
-        status: 'fail',
-        message: 'slots not created',
-      });
-    }
-
-    return res.status(200).json({
-      status: 'success',
-      message: 'slots created successfully',
-      data: newSlots,
-    });
-  } catch (err) {
-    if (err.code === 11000) {
-      return res.status(409).json({ error: 'Slots already created for this doctor and date' });
-    }
-    res.status(500).json({ error: err.message });
-  }
-}
 
 exports.getAppointmentsWithPayments = async (req, res) => {
   try {
@@ -285,30 +235,89 @@ exports.getAppointmentsWithPayments = async (req, res) => {
   }
 };
 
-async function bookSlot(doctorId, date, time, appointmentId) {
+async function findSlotByDateTime(doctorId, date, time) {
+  if (!doctorId || !date || !time) {
+    throw new Error('doctorId, date and time are required to find a slot');
+  }
+
+  const start = new Date(date);
+  const end = new Date(date);
+  end.setDate(end.getDate() + 1);
+  const query = {
+    doctorId,
+    date: { $gte: start, $lt: end },
+    slots: {
+      $elemMatch: {
+        status: { $in: ["booked", "unavailable"] },
+        time: time,
+        appointmentId: { $ne: null }
+      }
+    }
+  };
+  return await DoctorSlotModel.find(query);
+}
+
+async function bookSlot(req) {
+  const { doctorId, addressId, appointmentDate, appointmentTime, appointmentId } = req.body;
+  if (!doctorId || !addressId || !appointmentDate || !appointmentTime || !appointmentId) {
+    throw new Error('doctorId, addressId, appointmentDate, appointmentTime and appointmentId are required to book a slot');
+  }
   const result = await DoctorSlotModel.updateOne(
-    { doctorId, date, "slots.time": time, "slots.status": "available" },
+    {
+      doctorId,
+      addressId,
+      date: appointmentDate
+    },
     {
       $set: {
-        "slots.$.status": "booked",
-        "slots.$.appointmentId": appointmentId
+        "slots.$[elem].status": "booked",
+        "slots.$[elem].appointmentId": appointmentId,
+        "slots.$[elem].updatedBy": req.headers.userid,
+        "slots.$[elem].updatedAt": new Date()
       }
+    },
+    {
+      arrayFilters: [
+        {
+          "elem.time": appointmentTime,
+          "elem.status": "available"
+        }
+      ]
     }
   );
 
   if (result.modifiedCount === 0) {
-    throw new Error('Slot already booked or does not exist');
+    throw new Error('Slot already booked or slots do not exist');
   }
 }
 
-async function cancelSlot(doctorId, date, time) {
+async function cancelSlot(appointment, req) {
+  const { appointmentId, doctorId, addressId, appointmentDate, appointmentTime } = appointment;
+  if (!appointmentId || !doctorId || !addressId || !appointmentDate || !appointmentTime) {
+    throw new Error('appointmentId, doctorId, addressId, appointmentDate, appointmentTime are required to cancel a slot');
+  }
   await DoctorSlotModel.updateOne(
-    { doctorId, date, "slots.time": time },
+    {
+      doctorId,
+      addressId,
+      date: appointmentDate
+    },
     {
       $set: {
-        "slots.$.status": "available",
-        "slots.$.appointmentId": null
+        "slots.$[elem].status": "available",
+        "slots.$[elem].appointmentId": null,
+        "slots.$[elem].updatedBy": req.headers.userid,
+        "slots.$[elem].updatedAt": new Date()
       }
+    },
+    {
+      arrayFilters: [
+        {
+          "elem.appointmentId": appointmentId,
+          "elem.time": appointmentTime,
+          "elem.status": { $in: ["booked", "unavailable"] }
+        }
+      ]
     }
   );
 }
@@ -369,7 +378,7 @@ exports.getTodayAndUpcomingAppointmentsCount = async (req, res) => {
 
 
     console.log('--- Dates ---');
-console.log({ todayStart, todayEnd, tomorrowStart, doctorId });
+    console.log({ todayStart, todayEnd, tomorrowStart, doctorId });
     // Date-based counts
     const todayQuery = {
       ...baseQuery,
@@ -512,6 +521,7 @@ exports.getTopDoctorsByAppointmentCount = async (req, res) => {
   }
 };
 
+
 exports.cancelAppointment = async (req, res) => {
   const { appointmentId, reason } = req.body;
   if (!appointmentId) {
@@ -545,12 +555,35 @@ exports.cancelAppointment = async (req, res) => {
     //   });
     // }
 
-    // Fetch associated payment
+    /**
+     * Update the payment status to 'refund_pending'
+     * This will initiate the refund process for the patient
+     * The payment service has an endpoint to update payment status
+     * If the payment status is already 'success', we will update it to 'refund_pending'
+     * If the payment status is not 'success', we will return an error
+     */
     const payment = await updatePayment(req.headers.authorization, {
       appointmentId: appointment.appointmentId,
       status: 'refund_pending'
     });
 
+    if (!payment || payment.status !== 'success') {
+      return res.status(500).json({
+        status: 'fail',
+        message: 'Failed to update payment status to refund_pending. Please try again later.'
+      });
+    }
+    /**
+     * Cancel the slot in DoctorSlotModel
+     * This will set the slot status to 'available' and clear the appointmentId
+     * This is necessary to free up the slot for other patients
+     */
+    await cancelSlot(appointment, req);
+
+    /**
+     * Update the appointment status to 'cancelled'
+     * This will mark the appointment as cancelled and store the cancellation reason
+     */
     const updateAppointment = await appointmentModel.findOneAndUpdate(
       { "appointmentId": appointmentId },
       {
@@ -568,9 +601,9 @@ exports.cancelAppointment = async (req, res) => {
     }
     return res.status(200).json({
       status: 'success',
-      message: 'Appointment cancelled successfully',
-      appointmentDetails: appointment,
-      paymentDetails: payment.data || null
+      message: 'Appointment cancelled successfully'
+      // appointmentDetails: appointment,
+      // paymentDetails: payment.data || null
     });
 
   } catch (err) {
@@ -620,7 +653,12 @@ exports.rescheduleAppointment = async (req, res) => {
     //   });
     // }
 
-    // Check if the new slot is available
+    /**
+     * Check if the new slot is available
+     * This will check if there are any existing appointments for the same doctor, date and time
+     * If there are any existing appointments, we will return an error
+     * If there are no existing appointments, we will proceed to cancel the current appointment and book the new slot
+     */
     const checkSlotAvailable = await appointmentModel.find({
       "doctorId": appointment.doctorId,
       "appointmentDate": new Date(newDate),
@@ -628,21 +666,45 @@ exports.rescheduleAppointment = async (req, res) => {
       "appointmentStatus": { $in: ["pending", "scheduled"] }
     });
 
-    if (checkSlotAvailable.length > 0) {
+    const checkSlotAvailability = await findSlotByDateTime(appointment.doctorId, newDate, newTime);
+
+    if (checkSlotAvailable.length > 0 || checkSlotAvailability.length > 0) {
       return res.status(208).json({
         status: 'fail',
         message: 'Slot already booked for this date and time',
       });
     }
+    /** 
+     * Cancel the current appointment slot
+     * This will set the slot status to 'available' and clear the appointmentId
+     */
+    await cancelSlot(appointment, req);
+    /** 
+     * Book the new slot
+     * This will set the slot status to 'booked' and set the appointmentId
+     */
 
-    // Update the appointment with the new date and time
+    await bookSlot({
+      body: {
+        appointmentId: appointmentId,
+        doctorId: appointment.doctorId,
+        addressId: appointment.addressId,
+        appointmentDate: new Date(newDate),
+        appointmentTime: newTime
+      },
+      headers: req.headers
+    });
+    /**
+     * Update the appointment with new date and time
+     * This will update the appointment date, time and status to 'scheduled'
+     */
     const updateAppointment = await appointmentModel.findOneAndUpdate(
       { "appointmentId": appointmentId },
       {
         $set: {
           appointmentDate: new Date(newDate),
           appointmentTime: newTime,
-          appointmentStatus: "rescheduled",
+          appointmentStatus: "scheduled",
           updatedBy: req.headers ? req.headers.userid : '',
           updatedAt: new Date()
         },
@@ -888,12 +950,11 @@ exports.getTodayAppointmentCount = async (req, res) => {
   }
 };
 
-
 exports.getAppointmentsByDoctorID = async (req, res) => {
   try {
-    const doctorId = req.query.doctorId ||req.headers.userid ;
+    const doctorId = req.query.doctorId || req.headers.userid;
     const { type } = req.params;
-     const { date } = req.query;
+    const { date } = req.query;
 
     // Validate doctorId
     if (!doctorId) {
@@ -907,8 +968,8 @@ exports.getAppointmentsByDoctorID = async (req, res) => {
     const query = { doctorId, isDeleted: { $ne: true } };
     if (type === 'appointment') {
       query.appointmentStatus = { $in: ['scheduled', 'rescheduled', 'cancelled'] };
-    } 
-    else if (type === 'dashboardAppointment'){
+    }
+    else if (type === 'dashboardAppointment') {
       query.appointmentStatus = { $in: ['scheduled', 'rescheduled', 'cancelled', 'completed'] };
     }
     else {
@@ -939,10 +1000,9 @@ exports.getAppointmentsByDoctorID = async (req, res) => {
   }
 };
 
-
 exports.getAppointmentsCountByDoctorID = async (req, res) => {
   try {
-    const doctorId = req.query.doctorId ||req.headers.userid;
+    const doctorId = req.query.doctorId || req.headers.userid;
 
     // Validate doctorId
     if (!doctorId) {
@@ -974,14 +1034,10 @@ exports.getAppointmentsCountByDoctorID = async (req, res) => {
 };
 
 
-
 exports.getAppointment = async (req, res) => {
   try {
-
-    let appointmentId=req.query?.appointmentId
-
-    const appointment = await appointmentModel.findOne({appointmentId:appointmentId});
-
+    let appointmentId = req.query?.appointmentId
+    const appointment = await appointmentModel.findOne({ appointmentId: appointmentId });
     return res.status(200).json({
       status: 'success',
       message: 'Appointment retrieved successfully',
