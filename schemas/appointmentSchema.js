@@ -3,6 +3,7 @@ const Joi = require('joi');
 const appointmentSchema = Joi.object({
     userId: Joi.string().required(),
     doctorId: Joi.string().required(),
+    addressId: Joi.string().required(),
     patientName: Joi.string().allow(null, ''),
     doctorName: Joi.string().allow(null, ''),
     appointmentType: Joi.string().required(),

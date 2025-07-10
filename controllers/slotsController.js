@@ -4,7 +4,7 @@ const generateSlots = require('../utils/generateTimeSlots');
 const { sortSlotsByTime } = require('../utils/utils');
 
 exports.createSlotsForDoctor = async (req, res) => {
-  const requiredFields = ['doctorId', 'dates', 'startTime', 'endTime', 'interval'];
+  const requiredFields = ['doctorId', 'addressId', 'dates', 'startTime', 'endTime', 'interval'];
   const missingFields = requiredFields.filter(
     key => req.body[key] === undefined || req.body[key] === null || req.body[key] === ''
   );
@@ -16,7 +16,7 @@ exports.createSlotsForDoctor = async (req, res) => {
     });
   }
 
-  const { doctorId, dates, startTime, endTime, interval } = req.body;
+  const { doctorId, addressId, dates, startTime, endTime, interval } = req.body;
 
   if (!Array.isArray(dates) || dates.length === 0) {
     return res.status(400).json({
@@ -25,13 +25,13 @@ exports.createSlotsForDoctor = async (req, res) => {
     });
   }
 
-  const slotsToCreate = generateSlots(startTime, endTime, interval);
+  const slotsToCreate = generateSlots(startTime, endTime, interval, req);
 
   const results = [];
 
   for (const dateStr of dates) {
     const slotDate = new Date(dateStr);
-    const { error } = doctorSlotSchema.validate({ doctorId, date: slotDate, slots: slotsToCreate });
+    const { error } = doctorSlotSchema.validate({ doctorId, addressId, date: slotDate, slots: slotsToCreate });
     if (error) {
       return res.status(400).json({
         status: 'fail',
@@ -40,7 +40,7 @@ exports.createSlotsForDoctor = async (req, res) => {
     }
 
     try {
-      const existing = await DoctorSlotModel.findOne({ doctorId, date: slotDate });
+      const existing = await DoctorSlotModel.findOne({ doctorId, addressId, date: slotDate });
 
       if (existing) {
         const existingTimes = new Set(existing.slots.map(s => s.time));
@@ -59,8 +59,11 @@ exports.createSlotsForDoctor = async (req, res) => {
         const sortedSlots = sortSlotsByTime(slotsToCreate);
         await DoctorSlotModel.create({
           doctorId,
+          addressId,
           date: slotDate,
           slots: sortedSlots,
+          createdBy: req.headers.userid,
+          createdAt: new Date()
         });
 
         results.push({ date: dateStr, status: 'created', added: sortedSlots.length });
