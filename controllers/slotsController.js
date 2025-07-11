@@ -81,15 +81,15 @@ exports.createSlotsForDoctor = async (req, res) => {
 };
 
 exports.getSlotsByDoctorIdAndDate = async (req, res) => {
-  const { doctorId, date } = req.query;
-  if (!doctorId || !date) {
+  const { doctorId, date, addressId } = req.query;
+  if (!doctorId || !date || !addressId) {
     return res.status(400).json({
       status: 'fail',
-      message: 'doctorId and date are required',
+      message: 'doctorId, date, and addressId are required',
     });
   }
   const slotDate = new Date(date);
-  const slots = await DoctorSlotModel.findOne({ doctorId, date: slotDate });
+  const slots = await DoctorSlotModel.findOne({ doctorId, date: slotDate, addressId });
   if (!slots) {
     return res.status(404).json({
       status: 'fail',
@@ -150,5 +150,64 @@ exports.updateDoctorSlots = async (req, res) => {
     updatedSlots: updatedTimes,
     date,
     doctorId
+  });
+};
+
+exports.getNextAvailableSlotsByDoctorAndAddress = async (req, res) => {
+  const { doctorId, addressId } = req.query;
+
+  if (!doctorId || !addressId) {
+    return res.status(400).json({
+      status: 'fail',
+      message: 'doctorId and addressId are required query parameters',
+    });
+  }
+
+  const today = new Date();
+
+  // Step 1: Fetch documents with at least one available slot
+  const allDocs = await DoctorSlotModel.find({
+    doctorId,
+    addressId,
+    date: { $gte: today },
+    'slots.status': 'available'
+  }).sort({ date: 1 });
+
+  // Step 2: Filter slots manually based on current time and status
+  const now = new Date();
+  const results = [];
+
+  for (const doc of allDocs) {
+    const slotDate = new Date(doc.date).toISOString().split('T')[0];
+
+    const filteredSlots = doc.slots.filter(slot => {
+      if (slot.status !== 'available') return false;
+
+      const slotDateTime = new Date(`${slotDate}T${slot.time}:00`);
+      return slotDateTime > now;
+    });
+
+    if (filteredSlots.length > 0) {
+      results.push({
+        doctorId: doc.doctorId,
+        addressId: doc.addressId,
+        date: slotDate,
+        slots: filteredSlots
+      });
+    }
+
+    if (results.length >= 3) break; 
+  }
+
+  if (results.length === 0) {
+    return res.status(404).json({
+      status: 'fail',
+      message: 'No upcoming available slots found for this doctor',
+    });
+  }
+
+  return res.status(200).json({
+    status: 'success',
+    data: results
   });
 };
