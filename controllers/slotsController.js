@@ -100,10 +100,10 @@ exports.getSlotsByDoctorIdAndDate = async (req, res) => {
 exports.updateDoctorSlots = async (req, res) => {
   const { doctorId, date, timeSlots = [], addressId } = req.body;
 
-  if (!doctorId || !date) {
+  if (!doctorId || !date || !addressId) {
     return res.status(400).json({
       status: 'fail',
-      message: 'doctorId and date are required'
+      message: 'doctorId, date, and addressId are required'
     });
   }
 
