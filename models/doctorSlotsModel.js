@@ -21,6 +21,6 @@ const doctorSlotSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 
-doctorSlotSchema.index({ doctorId: 1, date: 1 }, { unique: true });
+doctorSlotSchema.index({ doctorId: 1, addressId: 1, date: 1 }, { unique: true });
 
 module.exports = mongoose.model('DoctorSlot', doctorSlotSchema);

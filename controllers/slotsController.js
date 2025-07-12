@@ -40,8 +40,7 @@ exports.createSlotsForDoctor = async (req, res) => {
     }
 
     try {
-      const existing = await DoctorSlotModel.findOne({ doctorId, addressId, date: slotDate });
-
+      const existing = await DoctorSlotModel.findOne({ doctorId, addressId, date: new Date(slotDate) });
       if (existing) {
         const existingTimes = new Set(existing.slots.map(s => s.time));
         const newUniqueSlots = slotsToCreate.filter(s => !existingTimes.has(s.time));
@@ -60,12 +59,11 @@ exports.createSlotsForDoctor = async (req, res) => {
         await DoctorSlotModel.create({
           doctorId,
           addressId,
-          date: slotDate,
+          date: new Date(slotDate),
           slots: sortedSlots,
           createdBy: req.headers.userid,
           createdAt: new Date()
         });
-
         results.push({ date: dateStr, status: 'created', added: sortedSlots.length });
       }
     } catch (err) {
@@ -89,7 +87,7 @@ exports.getSlotsByDoctorIdAndDate = async (req, res) => {
     });
   }
   const slotDate = new Date(date);
-  const slots = await DoctorSlotModel.findOne({ doctorId, date: slotDate, addressId });
+  const slots = await DoctorSlotModel.findOne({ doctorId, addressId, date: slotDate });
   if (!slots) {
     return res.status(404).json({
       status: 'fail',
@@ -100,7 +98,7 @@ exports.getSlotsByDoctorIdAndDate = async (req, res) => {
 };
 
 exports.updateDoctorSlots = async (req, res) => {
-  const { doctorId, date, timeSlots = [] } = req.body;
+  const { doctorId, date, timeSlots = [], addressId } = req.body;
 
   if (!doctorId || !date) {
     return res.status(400).json({
@@ -116,7 +114,7 @@ exports.updateDoctorSlots = async (req, res) => {
       message: `Invalid date format: '${date}'. Must be in YYYY-MM-DD format.`
     });
   }
-  const slotDoc = await DoctorSlotModel.findOne({ doctorId, date: slotDate });
+  const slotDoc = await DoctorSlotModel.findOne({ doctorId, addressId, date: slotDate });
 
   if (!slotDoc) {
     return res.status(404).json({
@@ -196,7 +194,7 @@ exports.getNextAvailableSlotsByDoctorAndAddress = async (req, res) => {
       });
     }
 
-    if (results.length >= 3) break; 
+    if (results.length >= 3) break;
   }
 
   if (results.length === 0) {
