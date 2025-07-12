@@ -209,3 +209,73 @@ exports.getNextAvailableSlotsByDoctorAndAddress = async (req, res) => {
     data: results
   });
 };
+
+exports.getNextAvailableSlotsByDoctor = async (req, res) => {
+  const { doctorId } = req.query;
+
+  if (!doctorId) {
+    return res.status(400).json({
+      status: 'fail',
+      message: 'doctorId is a required query parameter',
+    });
+  }
+
+  const now = new Date();
+
+  // Normalize today and tomorrow to midnight UTC
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+
+  const tomorrow = new Date(today);
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+
+  const dayAfter = new Date(today);
+  dayAfter.setUTCDate(dayAfter.getUTCDate() + 2);
+
+  // Step 1: Fetch today and tomorrow’s slots for doctor across all addresses
+  const allDocs = await DoctorSlotModel.find({
+    doctorId,
+    date: { $gte: today, $lt: dayAfter },
+    'slots.status': 'available'
+  }).sort({ date: 1 });
+
+  const results = [];
+
+  for (const doc of allDocs) {
+    const slotDate = new Date(doc.date);
+    const dateStr = slotDate.toISOString().split('T')[0];
+    const isToday = slotDate.toISOString().split('T')[0] === now.toISOString().split('T')[0];
+
+    const filteredSlots = doc.slots.filter(slot => {
+      if (slot.status !== 'available') return false;
+
+      if (isToday) {
+        const slotDateTime = new Date(`${dateStr}T${slot.time}:00`);
+        return slotDateTime > now;
+      }
+
+      return true; // For tomorrow, include all available slots
+    });
+
+    if (filteredSlots.length > 0) {
+      results.push({
+        doctorId: doc.doctorId,
+        addressId: doc.addressId,
+        date: dateStr,
+        slots: filteredSlots
+      });
+    }
+  }
+
+  if (results.length === 0) {
+    return res.status(404).json({
+      status: 'fail',
+      message: 'No available slots found for today or tomorrow',
+    });
+  }
+
+  return res.status(200).json({
+    status: 'success',
+    data: results
+  });
+};

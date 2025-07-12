@@ -4,13 +4,15 @@ const {
     createSlotsForDoctor,
     getSlotsByDoctorIdAndDate,
     updateDoctorSlots,
-    getNextAvailableSlotsByDoctorAndAddress
+    getNextAvailableSlotsByDoctorAndAddress,
+    getNextAvailableSlotsByDoctor
 } = require('../controllers/slotsController');
 
 router.post('/createSlotsForDoctor', createSlotsForDoctor);
 router.get('/getSlotsByDoctorIdAndDate', getSlotsByDoctorIdAndDate);
 router.put('/updateDoctorSlots', updateDoctorSlots);
 router.get('/getNextAvailableSlotsByDoctorAndAddress', getNextAvailableSlotsByDoctorAndAddress);
+router.get('/getNextAvailableSlotsByDoctor', getNextAvailableSlotsByDoctor);
 
 
 module.exports = router;
