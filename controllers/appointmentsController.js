@@ -1078,7 +1078,8 @@ exports.getAppointmentsByDoctorID = async (req, res) => {
           patientName: appointment.patientName || `${user.firstname || ''} ${user.lastname || ''}`.trim(),
           dob: user.DOB || null,
           mobile: user.mobile || null,
-          gender: user.gender || null
+          gender: user.gender || null,
+          age: user.age || null
         }
       };
     });
@@ -1146,6 +1147,40 @@ exports.getAppointment = async (req, res) => {
       status: 'fail',
       message: 'Error retrieving appointment',
       error: error.message,
+    });
+  }
+};
+
+exports.getAppointmentsByDoctor = async (req, res) => {
+  try {
+    const { doctorId } = req.params;
+
+    // Validate doctorId and userId
+    if (!doctorId ) {
+      return res.status(400).json({ error: 'Invalid Doctor ID or User ID' });
+    }
+
+    // Fetch appointments for the doctor and user
+    const appointments = await appointmentModel.find({
+      doctorId: doctorId,
+      appointmentStatus: { $ne: 'cancelled' }, // Exclude cancelled appointments
+    }).select('appointmentId userId doctorId appointmentType appointmentDate appointmentTime appointmentStatus createdAt _id');
+
+    // If no appointments found
+    if (!appointments || appointments.length === 0) {
+      return res.status(404).json({ message: 'No appointments found for this doctor and patient' });
+    }
+console.log("appointments===",appointments)
+    // Return the appointments
+    return res.status(200).json({
+      success: true,
+      data: appointments,
+    });
+  } catch (error) {
+    console.error('Error fetching appointments by doctor and user:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Internal Server Error',
     });
   }
 };
