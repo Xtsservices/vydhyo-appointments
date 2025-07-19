@@ -1069,9 +1069,39 @@ exports.getAppointmentsByDoctorID = async (req, res) => {
       }
     }
 
+     // Fetch e-prescriptions for completed appointments
+    let prescriptions = [];
+    if (query.appointmentStatus === 'completed' || query.appointmentStatus.$in?.includes('completed')) {
+      const appointmentIds = appointments
+        .filter(app => app.appointmentStatus === 'completed')
+        .map(app => app.appointmentId);
+      
+      if (appointmentIds.length > 0) {
+        try {
+          const userServiceUrl = process.env.USER_SERVICE_URL || 'http://localhost:4002';
+          const response = await axios.post(`${userServiceUrl}/pharmacy/getPrescriptionsByAppointmentIds`, { appointmentIds }, {
+            headers: {
+              'Content-Type': 'application/json',
+              // Add authorization headers if needed
+              // 'Authorization': `Bearer ${req.headers.authorization}`
+            }
+          });
+          console.log("firresponsest", response)
+          if (response.data.status === 'success') {
+            prescriptions = response.data.data;
+          } else {
+            console.error('Failed to fetch ePrescription details:', response.data.message);
+          }
+        } catch (error) {
+          console.error('Error fetching ePrescription details from User service:', error.message);
+        }
+      }
+    }
+
     // Map appointments with user details
     const enrichedAppointments = appointments.map(appointment => {
       const user = users.find(u => u.userId === appointment.userId) || {};
+       const prescription = prescriptions.find(p => p.appointmentId === appointment.appointmentId) || null;
       return {
         ...appointment._doc, // Spread appointment document
         patientDetails: {
@@ -1080,7 +1110,16 @@ exports.getAppointmentsByDoctorID = async (req, res) => {
           mobile: user.mobile || null,
           gender: user.gender || null,
           age: user.age || null
-        }
+        },
+         ePrescription: prescription ? {
+          prescriptionId: prescription.prescriptionId,
+          patientInfo: prescription.patientInfo,
+          vitals: prescription.vitals,
+          diagnosis: prescription.diagnosis,
+          advice: prescription.advice,
+          createdAt: prescription.createdAt,
+          updatedAt: prescription.updatedAt
+        } : null
       };
     });
 
@@ -1164,7 +1203,7 @@ exports.getAppointmentsByDoctor = async (req, res) => {
     const appointments = await appointmentModel.find({
       doctorId: doctorId,
       appointmentStatus: { $ne: 'cancelled' }, // Exclude cancelled appointments
-    }).select('appointmentId userId doctorId appointmentType appointmentDate appointmentTime appointmentStatus createdAt _id');
+    }).select('appointmentId userId doctorId appointmentType appointmentDate appointmentTime appointmentStatus createdAt _id addressId');
 
     // If no appointments found
     if (!appointments || appointments.length === 0) {
