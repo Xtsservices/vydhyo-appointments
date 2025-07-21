@@ -1086,7 +1086,6 @@ exports.getAppointmentsByDoctorID = async (req, res) => {
               // 'Authorization': `Bearer ${req.headers.authorization}`
             }
           });
-          console.log("firresponsest", response)
           if (response.data.status === 'success') {
             prescriptions = response.data.data;
           } else {

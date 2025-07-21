@@ -13,6 +13,14 @@ app.use(cookieParser());
 app.use(bodyParser.json());
 // Connect to MongoDB
 connectDB();
+
+// Register the appointment model (ensure the model is loaded before the cron job)
+require('./models/appointmentsModel');
+
+// Import and start the cron job for auto-completing appointments
+require('./cronJobs/completeAppointmentsCron');
+
+
 // Routes
 app.use('/appointment', appointmentRoutes);
 app.use('/appointment', slotsRoutes);
