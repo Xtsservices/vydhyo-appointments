@@ -2,6 +2,8 @@ const DoctorSlotModel = require('../models/doctorSlotsModel');
 const doctorSlotSchema = require('../schemas/doctorSlotsSchema');
 const generateSlots = require('../utils/generateTimeSlots');
 const { sortSlotsByTime } = require('../utils/utils');
+const Joi = require('joi');
+
 
 exports.createSlotsForDoctor = async (req, res) => {
   const requiredFields = ['doctorId', 'addressId', 'dates', 'startTime', 'endTime', 'interval'];
@@ -278,4 +280,118 @@ exports.getNextAvailableSlotsByDoctor = async (req, res) => {
     status: 'success',
     data: results
   });
+};
+
+exports.deleteDoctorSlots = async (req, res) => {
+  // Define schema for payload validation
+  const deleteSlotSchema = Joi.object({
+    doctorId: Joi.string().required().messages({
+      'any.required': 'doctorId is required',
+    }),
+    addressId: Joi.string().required().messages({
+      'any.required': 'addressId is required',
+    }),
+    date: Joi.string()
+      .pattern(/^\d{4}-\d{2}-\d{2}$/)
+      .required()
+      .messages({
+        'string.pattern.base': 'date must be in YYYY-MM-DD format',
+        'any.required': 'date is required',
+      }),
+    slotTimes: Joi.array()
+      .items(
+        Joi.string()
+          .pattern(/^([0-1]\d|2[0-3]):([0-5]\d)$/)
+          .messages({
+            'string.pattern.base': 'Each slot time must be in HH:MM 24-hour format',
+          })
+      )
+      .min(1)
+      .required()
+      .messages({
+        'array.min': 'slotTimes must contain at least one time slot',
+        'any.required': 'slotTimes is required',
+      }),
+  });
+
+  // Validate payload
+  const { error, value } = deleteSlotSchema.validate(req.body);
+  if (error) {
+    return res.status(400).json({
+      status: 'fail',
+      message: error.details[0].message,
+    });
+  }
+
+  const { doctorId, addressId, date, slotTimes } = value;
+
+  // Normalize date to midnight UTC
+  const slotDate = new Date(date);
+  if (isNaN(slotDate.getTime())) {
+    return res.status(400).json({
+      status: 'fail',
+      message: `Invalid date format: '${date}'. Must be in YYYY-MM-DD format.`,
+    });
+  }
+  slotDate.setUTCHours(0, 0, 0, 0);
+
+  try {
+    // Find the slot document
+    const slotDoc = await DoctorSlotModel.findOne({ doctorId, addressId, date: slotDate });
+    if (!slotDoc) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'No slots found for the specified doctor, address, and date',
+      });
+    }
+
+    // Filter out the specified slotTimes
+    const initialSlotCount = slotDoc.slots.length;
+    const deletedTimes = [];
+    slotDoc.slots = slotDoc.slots.filter(slot => {
+      if (slotTimes.includes(slot.time)) {
+        deletedTimes.push(slot.time);
+        return false; // Remove this slot
+      }
+      return true; // Keep this slot
+    });
+
+    // Check if any slots were deleted
+    if (deletedTimes.length === 0) {
+      return res.status(200).json({
+        status: 'success',
+        message: `No matching slots found for the specified times: ${slotTimes.join(', ')}`,
+        deletedSlots: 0,
+        deletedTimes: [],
+      });
+    }
+
+    // If no slots remain, delete the document
+    if (slotDoc.slots.length === 0) {
+      await slotDoc.remove();
+      return res.status(200).json({
+        status: 'success',
+        message: `Deleted ${deletedTimes.length} slot(s) for ${date} at address ${addressId} for doctor ${doctorId}, and the slot document was removed as it became empty`,
+        deletedSlots: deletedTimes.length,
+        deletedTimes,
+      });
+    }
+
+    // Save the updated document
+    await slotDoc.save();
+
+    return res.status(200).json({
+      status: 'success',
+      message: `Deleted ${deletedTimes.length} slot(s) for ${date} at address ${addressId} for doctor ${doctorId}`,
+      deletedSlots: deletedTimes.length,
+      deletedTimes,
+    });
+  } catch (error) {
+    console.error('Error deleting slots:', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Failed to delete slots',
+      error: error.message,
+    });
+  }
 };

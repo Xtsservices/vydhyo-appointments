@@ -25,7 +25,7 @@ const autoCompleteAppointments = async () => {
                   { $dateToString: { format: '%Y-%m-%d', date: '$appointmentDate' } },
                   'T',
                   '$appointmentTime',
-                  ':00Z'
+                  ':00'
                 ]
               },
               timezone: 'Asia/Kolkata'
