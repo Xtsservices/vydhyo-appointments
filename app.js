@@ -6,7 +6,7 @@ const connectDB = require('./utils/db');
 const logger = require('./utils/logger'); 
 const appointmentRoutes = require('./routes/appointmentsRoutes');
 const slotsRoutes = require('./routes/slotsRouter');
-// Middleware
+// Middleware 
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
