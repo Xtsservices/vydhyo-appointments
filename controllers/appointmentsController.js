@@ -1094,6 +1094,10 @@ exports.getAppointmentsByDoctorID = async (req, res) => {
       query.$or = [
         { patientName: { $regex: searchText, $options: 'i' } },
         { appointmentId: { $regex: searchText, $options: 'i' } },
+         { appointmentId: searchText },
+        { userId: { $regex: searchText, $options: 'i' } },
+
+  { userId: searchText },
         { userId: { $in: userIds } } // Matches users from search
       ];
     }
