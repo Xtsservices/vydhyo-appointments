@@ -1015,13 +1015,24 @@ exports.getAppointmentsByDoctorID = async (req, res) => {
   try {
     const doctorId = req.query.doctorId || req.headers.userid;
     const { type } = req.params;
-    const { date } = req.query;
+    // const { date } = req.query;
+    const { date, searchText, clinic, appointmentType, status, page = 1, limit = 5 } = req.query;
 
     // Validate doctorId
     if (!doctorId) {
       return res.status(400).json({
         status: "fail",
         message: "Doctor ID is required in headers"
+      });
+    }
+
+     // Validate pagination parameters
+    const pageNum = parseInt(page, 10);
+    const limitNum = parseInt(limit, 10);
+    if (isNaN(pageNum) || pageNum < 1 || isNaN(limitNum) || limitNum < 1) {
+      return res.status(400).json({
+        status: "fail",
+        message: "Invalid page or limit parameters"
       });
     }
 
@@ -1041,8 +1052,60 @@ exports.getAppointmentsByDoctorID = async (req, res) => {
       query.appointmentDate = { $gte: startOfDay, $lte: endOfDay };
     }
 
+    // Clinic (appointmentDepartment) filter
+    if (clinic && clinic !== 'all') {
+      query.appointmentDepartment = clinic;
+    }
+
+    // Appointment type filter
+    if (appointmentType && appointmentType !== 'all') {
+      query.appointmentType = appointmentType;
+    }
+
+    // Status filter
+    if (status && status !== 'all') {
+      query.appointmentStatus = status;
+    }
+
+
+    // Search text filter (patientName, appointmentId, email, mobile)
+    if (searchText) {
+      const userIds = [];
+      // Fetch users matching searchText for name, email, or mobile
+      try {
+        const userServiceUrl = process.env.USER_SERVICE_URL || 'http://localhost:4002';
+        const userResponse = await axios.post(`${userServiceUrl}/users/searchUsers`, {
+          searchText
+        }, {
+          headers: {
+            'Content-Type': 'application/json',
+            // Add authorization headers if needed
+            // 'Authorization': `Bearer ${req.headers.authorization}`
+          }
+        });
+        if (userResponse.data.status === 'success') {
+          userIds.push(...userResponse.data.data.map(user => user.userId));
+        }
+      } catch (error) {
+        console.error('Error searching users:', error.message);
+      }
+
+      // Build search query
+      query.$or = [
+        { patientName: { $regex: searchText, $options: 'i' } },
+        { appointmentId: { $regex: searchText, $options: 'i' } },
+        { userId: { $in: userIds } } // Matches users from search
+      ];
+    }
+
+    // Calculate pagination
+    const skip = (pageNum - 1) * limitNum;
+    const totalAppointments = await appointmentModel.countDocuments(query);
+    const totalPages = Math.ceil(totalAppointments / limitNum);
+
     // Find appointments
-    const appointments = await appointmentModel.find(query).sort({ appointmentDate: -1 });
+    const appointments = await appointmentModel.find(query).sort({ appointmentDate: -1 }) .skip(skip)
+      .limit(limitNum);
 
     // Extract userIds from appointments
     const userIds = [...new Set(appointments.map(app => app.userId))]; // Unique userIds
@@ -1125,7 +1188,15 @@ exports.getAppointmentsByDoctorID = async (req, res) => {
     return res.status(200).json({
       status: "success",
       message: "Appointments retrieved successfully",
-      data: enrichedAppointments
+      data: {
+        appointments: enrichedAppointments,
+        pagination: {
+          currentPage: pageNum,
+          pageSize: limitNum,
+          totalItems: totalAppointments,
+          totalPages
+        }
+      }
     });
 
   } catch (error) {
@@ -1150,15 +1221,28 @@ exports.getAppointmentsCountByDoctorID = async (req, res) => {
     }
 
     // Build query
-    const query = { doctorId, isDeleted: { $ne: true } };
-    query.appointmentStatus = { $in: ['scheduled', 'rescheduled', 'cancelled', 'completed'] };
-    // Find appointments
-    const appointments = await appointmentModel.find(query).sort({ appointmentDate: -1 });
+    const baseQuery = { doctorId, isDeleted: { $ne: true } };
+
+    
+    // Count by status
+    const rescheduledCount = await appointmentModel.countDocuments({ ...baseQuery, appointmentStatus: 'rescheduled' });
+    const scheduledCount = await appointmentModel.countDocuments({ ...baseQuery, appointmentStatus: 'scheduled' });
+    const cancelledCount = await appointmentModel.countDocuments({ ...baseQuery, appointmentStatus: 'cancelled' });
+    const completedCount = await appointmentModel.countDocuments({ ...baseQuery, appointmentStatus: 'completed' });
+    const totalCount = await appointmentModel.countDocuments({ ...baseQuery, appointmentStatus: { $in: ['scheduled', 'rescheduled', 'cancelled', 'completed'] } });
+
+  
 
     return res.status(200).json({
       status: "success",
-      message: "Appointments retrieved successfully",
-      data: appointments
+      message: "Appointments counts retrieved successfully",
+       data: {
+        total: totalCount,
+        scheduled: scheduledCount,
+        rescheduled: rescheduledCount,
+        cancelled: cancelledCount,
+        completed: completedCount
+      }
     });
 
   } catch (error) {

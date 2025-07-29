@@ -125,6 +125,7 @@ exports.updateDoctorSlots = async (req, res) => {
     });
   }
 
+  const normalizedInputTimes = timeSlots.map(t => t.trim());
   const updatedTimes = [];
 
   slotDoc.slots = slotDoc.slots.map(currentSlot => {
@@ -324,6 +325,7 @@ exports.deleteDoctorSlots = async (req, res) => {
   }
 
   const { doctorId, addressId, date, slotTimes } = value;
+  console.log('Deleting slots for:', { doctorId, addressId, date, slotTimes });
 
   // Normalize date to midnight UTC
   const slotDate = new Date(date);
@@ -344,6 +346,12 @@ exports.deleteDoctorSlots = async (req, res) => {
         message: 'No slots found for the specified doctor, address, and date',
       });
     }
+
+    const normalizedSlotTimes = slotTimes.map(t => t.trim());
+
+    // Debug logs
+    console.log(' Existing Slots:', slotDoc.slots.map(s => s.time));
+    console.log(' Target Deletion SlotTimes:', normalizedSlotTimes);
 
     // Filter out the specified slotTimes
     const initialSlotCount = slotDoc.slots.length;
@@ -368,7 +376,9 @@ exports.deleteDoctorSlots = async (req, res) => {
 
     // If no slots remain, delete the document
     if (slotDoc.slots.length === 0) {
-      await slotDoc.remove();
+      // await slotDoc.remove();
+      await DoctorSlotModel.deleteOne({ _id: slotDoc._id });
+      
       return res.status(200).json({
         status: 'success',
         message: `Deleted ${deletedTimes.length} slot(s) for ${date} at address ${addressId} for doctor ${doctorId}, and the slot document was removed as it became empty`,
