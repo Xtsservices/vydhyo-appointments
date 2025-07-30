@@ -101,7 +101,7 @@ exports.getSlotsByDoctorIdAndDate = async (req, res) => {
 
 exports.updateDoctorSlots = async (req, res) => {
   const { doctorId, date, timeSlots = [], addressId } = req.body;
-
+console.log('Updating slots for:', { doctorId, date, timeSlots, addressId }, req.body);
   if (!doctorId || !date || !addressId) {
     return res.status(400).json({
       status: 'fail',
@@ -270,16 +270,16 @@ exports.getNextAvailableSlotsByDoctor = async (req, res) => {
     }
   }
 
-  if (results.length === 0) {
-    return res.status(404).json({
-      status: 'fail',
-      message: 'No available slots found for today or tomorrow',
-    });
-  }
+  // if (results.length === 0) {
+  //   return res.status(404).json({
+  //     status: 'fail',
+  //     message: 'No available slots found for today or tomorrow',
+  //   });
+  // }
 
   return res.status(200).json({
     status: 'success',
-    data: results
+    data: results || []
   });
 };
 
