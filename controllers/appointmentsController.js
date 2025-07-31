@@ -1108,7 +1108,7 @@ exports.getAppointmentsByDoctorID = async (req, res) => {
     const totalPages = Math.ceil(totalAppointments / limitNum);
 
     // Find appointments
-    const appointments = await appointmentModel.find(query).sort({ appointmentDate: -1 }) .skip(skip)
+    const appointments = await appointmentModel.find(query).sort({ createdAt: -1, appointmentDate: -1 }) .skip(skip)
       .limit(limitNum);
 
     // Extract userIds from appointments
