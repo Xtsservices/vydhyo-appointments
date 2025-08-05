@@ -1215,6 +1215,7 @@ exports.getAppointmentsByDoctorID = async (req, res) => {
 exports.getAppointmentsCountByDoctorID = async (req, res) => {
   try {
     const doctorId = req.query.doctorId || req.headers.userid;
+const { startDate, endDate } = req.query;
 
     // Validate doctorId
     if (!doctorId) {
@@ -1224,8 +1225,32 @@ exports.getAppointmentsCountByDoctorID = async (req, res) => {
       });
     }
 
+    // Check dates if provided
+    let dateFilter = {};
+    if (startDate && endDate) {
+      // Validate dates
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      if (isNaN(start) || isNaN(end)) {
+        return res.status(400).json({
+          status: "fail",
+          message: "Invalid date format"
+        });
+      }
+      if (start > end) {
+        return res.status(400).json({
+          status: "fail",
+          message: "Start date cannot be after end date"
+        });
+      }
+      dateFilter = {
+        appointmentDate: { $gte: start, $lte: end }
+      };
+    }
+
+
     // Build query
-    const baseQuery = { doctorId, isDeleted: { $ne: true } };
+    const baseQuery = { doctorId, isDeleted: { $ne: true }, ...dateFilter };
 
     
     // Count by status
