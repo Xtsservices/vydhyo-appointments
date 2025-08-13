@@ -1335,3 +1335,137 @@ console.log("appointments===",appointments)
     });
   }
 };
+
+
+exports.getAllFamilyAppointments = async (req, res) => {
+  try {
+    // Step 1: Get userId from headers or params
+    const userId =   req.params?.userId || req.headers?.userid;
+    const status = req.query.status;
+
+    if (!userId) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'userId is required in headers or params',
+      });
+    }
+
+    // Step 2: Fetch users where familyProvider matches userId or userId matches
+    const userServiceUrl = process.env.USER_SERVICE_URL || 'http://localhost:4002';
+    const userResponse = await axios.get(`${userServiceUrl}/users/getUserIds`, {
+      params: {
+        $or: [
+          { familyProvider: userId },
+          { userId: userId },
+        ],
+        isDeleted: false, // Exclude deleted users
+      },
+      headers: {
+        'Content-Type': 'application/json',
+        // Add authorization headers if needed
+        // 'Authorization': `Bearer ${req.headers.authorization}`
+      },
+    });
+
+
+    if (!userResponse.data || !userResponse.data.data || userResponse.data.data.length === 0) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'No users found for this family provider',
+      });
+    }
+
+    // Step 3: Extract userIds from the response
+    const userIds = userResponse.data.data.map(user => user.userId);
+
+    // Step 4: Fetch appointments for the list of userIds
+    const query = { userId: { $in: userIds } };
+
+    // Add appointmentStatus filter if provided
+    if (status) {
+      // Validate status against allowed values from appointmentSchema
+      const validStatuses = ['pending', 'scheduled', 'completed', 'cancelled', 'rescheduled'];
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({
+          status: 'fail',
+          message: `Invalid status. Must be one of: ${validStatuses.join(', ')}`,
+        });
+      }
+      query.appointmentStatus = status;
+    }
+
+    const appointmentResponse = await appointmentModel.find(query);
+
+    if (!appointmentResponse || appointmentResponse.length === 0) {
+      return res.status(200).json({
+        status: 'success',
+        message: 'No appointments found for the family members',
+        data:[]
+      });
+    }
+
+    // Step 5: Combine user details with appointments for better context (optional)
+    const appointments = appointmentResponse.map(appointment => {
+      const user = userResponse.data.data.find(u => u.userId === appointment.userId);
+      return {
+        ...appointment.toObject(), // Convert Mongoose document to plain object
+        patientName: user ? `${user.firstname} ${user.lastname || ''}`.trim() : appointment.patientName,
+      };
+    });
+
+    // Step 6: Return the response
+    return res.status(200).json({
+      status: 'success',
+      message: 'Appointments retrieved successfully',
+      data: appointments,
+    });
+
+  } catch (error) {
+    return res.status(500).json({
+      status: 'error',
+      message: 'Error retrieving appointments',
+      error: error.message,
+    });
+  }
+};
+
+
+exports.getAppointmentDataByUserIdAndDoctorId = async (req, res) => {
+  try {
+    const doctorId = req.query.doctorId;
+    const userId = req.query.userId;
+
+    if (!doctorId || !userId) {
+      return res.status(400).json({
+        status: "fail",
+        message: "doctorId and userId are required",
+      });
+    }
+
+    // Fetch the latest appointment
+    const latestAppointment = await appointmentModel.findOne({
+      doctorId,
+      userId,
+    })
+      .sort({ appointmentDate: -1, appointmentTime: -1 })
+      .lean();
+
+    if (!latestAppointment) {
+      return res.status(404).json({
+        status: "fail",
+        message: "No appointment found",
+      });
+    }
+
+    res.status(200).json({
+      status: "success",
+      data: latestAppointment,
+    });
+  } catch (error) {
+    console.error("Error fetching latest appointment:", error);
+    res.status(500).json({
+      status: "error",
+      message: error.message || "Internal Server Error",
+    });
+  }
+};
