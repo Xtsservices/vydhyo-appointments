@@ -1486,3 +1486,42 @@ exports.getAppointmentDataByUserIdAndDoctorId = async (req, res) => {
     });
   }
 };
+
+exports.getAllFamilyDoctors = async (req, res) => {
+  try {
+    // Step 1: Get userIds from headers or params
+   // Step 1: Get userIds from query string
+    let { userIds } = req.query;
+
+    if (!userIds) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'userIds are required',
+      });
+    }
+
+   
+    const appointments = await appointmentModel.find(
+      { userId: { $in: userIds } },
+      { doctorId: 1, _id: 0 }
+    );
+
+   
+const doctorIds = [...new Set(appointments.map((a) => a.doctorId))];
+
+   
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'Family doctors retrieved successfully',
+      data: doctorIds || [],
+    });
+
+  } catch (error) {
+    return res.status(500).json({
+      status: 'error',
+      message: 'Error retrieving family doctors',
+      error: error.message,
+    });
+  }
+}
