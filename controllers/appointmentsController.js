@@ -541,6 +541,23 @@ exports.cancelAppointment = async (req, res) => {
       return res.status(404).json({ status: 'fail', message: "Appointment not found" });
     }
 
+
+     const resp = await axios.get(
+          `http://localhost:4002/pharmacy/getEPrescriptionByAppointmentId/${appointmentId}`,
+          {
+            headers: {
+        'Content-Type': 'application/json',
+        // Add authorization headers if needed
+        // 'Authorization': `Bearer ${req.headers.authorization}`
+      },
+          },
+           
+        );
+        if (resp?.data?.data?.length > 0) {
+          console.log('Prescription exists, cannot cancel appointment');
+          return res.status(400).json({ status: 'fail', message: "Cannot cancel appointment with existing prescription" });
+        } 
+       
     // Only cancel if not already cancelled or completed
     if (['cancelled', 'completed'].includes(appointment.appointmentStatus)) {
       return res.status(400).json({ status: 'fail', message: `Cannot cancel appointment already marked as ${appointment.appointmentStatus}` });
