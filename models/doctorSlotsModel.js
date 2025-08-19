@@ -24,3 +24,11 @@ const doctorSlotSchema = new mongoose.Schema({
 doctorSlotSchema.index({ doctorId: 1, addressId: 1, date: 1 }, { unique: true });
 
 module.exports = mongoose.model('DoctorSlot', doctorSlotSchema);
+
+
+// Define ClinicModel (assumed for this example)
+const clinicSchema = new mongoose.Schema({
+  addressId: { type: String, required: true, unique: true },
+  name: { type: String, required: true }
+});
+const ClinicModel = mongoose.model('Clinic', clinicSchema);

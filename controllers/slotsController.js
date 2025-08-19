@@ -3,7 +3,7 @@ const doctorSlotSchema = require('../schemas/doctorSlotsSchema');
 const generateSlots = require('../utils/generateTimeSlots');
 const { sortSlotsByTime } = require('../utils/utils');
 const Joi = require('joi');
-
+const axios = require('axios');
 
 exports.createSlotsForDoctor = async (req, res) => {
   const requiredFields = ['doctorId', 'addressId', 'dates', 'startTime', 'endTime', 'interval'];
@@ -42,6 +42,82 @@ exports.createSlotsForDoctor = async (req, res) => {
     }
 
     try {
+
+       // Check for existing slots for the doctor on the same date across ALL addresses
+      const existingSlotsAcrossAddresses = await DoctorSlotModel.find({
+        doctorId,
+        date: new Date(slotDate)
+      });
+      
+ // Collect all existing times and their associated clinic names
+      const allExistingTimes = new Map();
+      for (const doc of existingSlotsAcrossAddresses) {
+        let clinicName = doc.addressId; // Fallback to addressId
+        try {
+          const response = await axios.get(
+            `http://localhost:4002/users/getClinicNameByID/${doc.addressId}`,
+            {
+              headers: {
+                'Content-Type': 'application/json',
+                // Add authorization headers if needed
+                // 'Authorization': `Bearer ${req.headers.authorization}`
+              }
+            }
+          );
+          clinicName = response.data.clinicName || doc.addressId;
+        } catch (apiError) {
+          console.error(`Failed to fetch clinic name for addressId ${doc.addressId}:`, apiError.message);
+        }
+        doc.slots.forEach(slot => {
+          allExistingTimes.set(slot.time, clinicName);
+        });
+      }
+
+      // Identify overlapping slots and their times
+      const overlappingSlots = slotsToCreate
+        .filter(slot => allExistingTimes.has(slot.time))
+        .map(slot => ({
+          time: slot.time,
+          clinic: allExistingTimes.get(slot.time)
+        }));
+
+      // Filter out slots that overlap with existing slots at any address
+      const newUniqueSlots = slotsToCreate.filter(slot => !allExistingTimes.has(slot.time));
+
+      if (newUniqueSlots.length === 0) {
+        // Group overlapping slots by clinic
+        const overlapsByClinic = overlappingSlots.reduce((acc, { time, clinic }) => {
+          if (!acc[clinic]) acc[clinic] = [];
+          acc[clinic].push(time);
+          return acc;
+        }, {});
+
+        // Format the overlaps for the response
+        const overlaps = Object.entries(overlapsByClinic).map(([clinic, times]) => ({
+          clinic,
+          times: times.sort() // Sort times for consistent output
+        }));
+
+        const reason = `All slots overlap with existing slots at other addresses`;
+        results.push({ date: dateStr, status: 'skipped', reason, overlaps });
+        continue;
+      }
+
+
+      // Collect all existing times for the doctor on this date
+      // const allExistingTimes = new Set();
+      // existingSlotsAcrossAddresses.forEach(doc => {
+      //   doc.slots.forEach(slot => allExistingTimes.add(slot.time));
+      // });
+
+      // // Filter out slots that overlap with existing slots at any address
+      // const newUniqueSlots = slotsToCreate.filter(slot => !allExistingTimes.has(slot.time));
+
+      // if (newUniqueSlots.length === 0) {
+      //   results.push({ date: dateStr, status: 'skipped', reason: 'All slots overlap with existing slots at another address' });
+      //   continue;
+      // }
+      
       const existing = await DoctorSlotModel.findOne({ doctorId, addressId, date: new Date(slotDate) });
       if (existing) {
         const existingTimes = new Set(existing.slots.map(s => s.time));
