@@ -48,7 +48,7 @@ exports.createSlotsForDoctor = async (req, res) => {
         doctorId,
         date: new Date(slotDate)
       });
-      
+
  // Collect all existing times and their associated clinic names
       const allExistingTimes = new Map();
       for (const doc of existingSlotsAcrossAddresses) {
@@ -98,7 +98,7 @@ exports.createSlotsForDoctor = async (req, res) => {
           times: times.sort() // Sort times for consistent output
         }));
 
-        const reason = `All slots overlap with existing slots at other addresses`;
+        const reason = `All slots overlap with existing slots at other clinics`;
         results.push({ date: dateStr, status: 'skipped', reason, overlaps });
         continue;
       }
