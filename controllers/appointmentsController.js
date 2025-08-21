@@ -89,6 +89,7 @@ exports.createAppointment = async (req, res) => {
         finalAmount: req.body.finalAmount,
         paymentStatus: 'paid',
         paymentFrom: 'appointment',
+        appSource: req.body.appSource || 'patientApp',
       });
 
       if (!paymentResponse || paymentResponse.status !== 'success') {
