@@ -1341,17 +1341,26 @@ exports.getAppointment = async (req, res) => {
 exports.getAppointmentsByDoctor = async (req, res) => {
   try {
     const { doctorId } = req.params;
+     const { patientId } = req.query;
 
     // Validate doctorId and userId
     if (!doctorId ) {
       return res.status(400).json({ error: 'Invalid Doctor ID or User ID' });
     }
 
+    // Build query dynamically
+    const query = {
+      doctorId,
+      appointmentStatus: { $ne: "cancelled" }, // Exclude cancelled appointments
+    };
+
+    if (patientId) {
+      query.userId = patientId;
+    }
+
+
     // Fetch appointments for the doctor and user
-    const appointments = await appointmentModel.find({
-      doctorId: doctorId,
-      appointmentStatus: { $ne: 'cancelled' }, // Exclude cancelled appointments
-    }).select('appointmentId userId doctorId appointmentType appointmentDate appointmentTime appointmentStatus createdAt _id addressId');
+    const appointments = await appointmentModel.find(query).select('appointmentId userId doctorId appointmentType appointmentDate appointmentTime appointmentStatus createdAt _id addressId');
 
     // If no appointments found
     if (!appointments || appointments.length === 0) {
