@@ -6,6 +6,7 @@ const connectDB = require('./utils/db');
 const logger = require('./utils/logger'); 
 const appointmentRoutes = require('./routes/appointmentsRoutes');
 const slotsRoutes = require('./routes/slotsRouter');
+const whatsappRoutes = require('./routes/whatsappBookingRouter');
 // Middleware 
 const app = express();
 app.use(express.json());
@@ -24,6 +25,7 @@ require('./cronJobs/completeAppointmentsCron');
 // Routes
 app.use('/appointment', appointmentRoutes);
 app.use('/appointment', slotsRoutes);
+app.use('/whatsappbooking', whatsappRoutes);
 
 
 // Connect to MongoDB and start server
