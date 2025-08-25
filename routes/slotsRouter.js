@@ -6,7 +6,8 @@ const {
     updateDoctorSlots,
     getNextAvailableSlotsByDoctorAndAddress,
     getNextAvailableSlotsByDoctor,
-    deleteDoctorSlots
+    deleteDoctorSlots,
+    getSlotsByDoctorIdAndDateForWhatsapp
 } = require('../controllers/slotsController');
 
 router.post('/createSlotsForDoctor', createSlotsForDoctor);
@@ -15,5 +16,8 @@ router.put('/updateDoctorSlots', updateDoctorSlots);
 router.get('/getNextAvailableSlotsByDoctorAndAddress', getNextAvailableSlotsByDoctorAndAddress);
 router.get('/getNextAvailableSlotsByDoctor', getNextAvailableSlotsByDoctor);
 router.delete('/deleteDoctorSlots', deleteDoctorSlots);
+
+// Duplicate API for WhatsApp integration
+router.get('/getSlotsByDoctorIdAndDateForWhatsapp', getSlotsByDoctorIdAndDateForWhatsapp);
 
 module.exports = router;
