@@ -15,8 +15,8 @@ const appointmentSchema = Joi.object({
         .message('appointmentTime must be in HH:mm format'),
     appointmentReason: Joi.string().required(),
     appointmentStatus: Joi.string()
-        .valid('scheduled', 'completed', 'cancelled', 'rescheduled')
-        .default('scheduled'),
+        .valid('scheduled', 'completed', 'cancelled','pending', 'rescheduled')
+        .default('pending'),
     appointmentNotes: Joi.string().allow(null, '').optional(),
     paymentStatus: Joi.string()
         .valid('paid', 'unpaid')

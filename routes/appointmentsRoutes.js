@@ -20,10 +20,16 @@ const {
   getAppointmentsByDoctor,
   getAllFamilyAppointments,
   getAppointmentDataByUserIdAndDoctorId,
-  getAllFamilyDoctors
+  getAllFamilyDoctors,
+  updateAppointmentStatus,
+  releaseDoctorSlot
 } = require('../controllers/appointmentsController');
 
 router.post('/createAppointment', createAppointment);
+//After sdk Payment success
+router.post('/updateAppointmentStatus', updateAppointmentStatus);
+//after payment failure
+router.post('/releaseDoctorSlot', releaseDoctorSlot);
 router.get('/getAppointments', getAppointmentsWithPayments);
 router.get('/getAllAppointments', getAllAppointments);
 router.get('/getAppointmentTypeCounts', getAppointmentTypeCounts);

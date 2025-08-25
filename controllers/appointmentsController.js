@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const appointmentModel = require('../models/appointmentsModel');
 const sequenceSchema = require('../sequence/sequenceSchema');
 const appointmentSchema = require('../schemas/appointmentSchema');
@@ -8,6 +9,47 @@ const { createPayment, getAppointmentPayments, updatePayment } = require('../ser
 const moment = require('moment-timezone');
 const { parseFlexibleDate } = require('../utils/utils');
 const axios = require('axios'); // Add axios for making HTTP requests
+
+exports.updateAppointmentStatus = async (req, res) => {
+  try {
+    const {appointmentId} = req.body;
+console.log("appointmentId",appointmentId)
+    // Validate input
+    if (!appointmentId) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Appointment ID is required',
+      });
+    }
+
+    // Update appointment status
+    const updatedAppointment = await appointmentModel.findOneAndUpdate(
+  { appointmentId: appointmentId },   // match your custom appointmentId field
+  { appointmentStatus: "scheduled" },
+  { new: true }
+);
+
+    if (!updatedAppointment) {
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Appointment not found',
+      });
+    }
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        appointment: updatedAppointment,
+      },
+    });
+  } catch (error) {
+    console.error('Error updating appointment status:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Internal server error',
+    });
+  }
+};
 
 exports.createAppointment = async (req, res) => {
   try {
@@ -76,8 +118,9 @@ exports.createAppointment = async (req, res) => {
 
     // Step 6: Call payment API (with newly created appointmentId)
     let paymentResponse = { status: 'pending' };
+    let updatedAppointment;
 
-    if (req.body.paymentStatus === 'paid') {
+    if (req.body.paymentStatus === 'paid' && (req.body.appSource !== 'patientApp')) {
       paymentResponse = await createPayment(req.headers.authorization, {
         userId: req.body.userId,
         doctorId: req.body.doctorId,
@@ -89,7 +132,7 @@ exports.createAppointment = async (req, res) => {
         finalAmount: req.body.finalAmount,
         paymentStatus: 'paid',
         paymentFrom: 'appointment',
-        appSource: req.body.appSource || 'patientApp',
+        appSource: req.body.appSource,
       });
 
       if (!paymentResponse || paymentResponse.status !== 'success') {
@@ -98,9 +141,9 @@ exports.createAppointment = async (req, res) => {
           message: 'Payment failed, appointment not created.',
         });
       }
-    }
-    // Step 7: Update appointment status to 'scheduled' after successful payment
-    const updatedAppointment = await appointmentModel.findByIdAndUpdate(
+
+      // Step 7: Update appointment status to 'scheduled' after successful payment
+     updatedAppointment = await appointmentModel.findByIdAndUpdate(
       appointment._id,
       { appointmentStatus: 'scheduled' },
       { new: true }
@@ -113,12 +156,17 @@ exports.createAppointment = async (req, res) => {
       });
     }
 
+    }
+    
+
     return res.status(200).json({
       status: 'success',
       message: 'Appointment created successfully',
       data: {
         appointmentDetails: updatedAppointment,
         paymentDetails: paymentResponse.data,
+        appointmentId: req.body.appointmentId,
+        appointmentObjId: appointment._id
       }
     });
 
@@ -301,7 +349,8 @@ async function cancelSlot(appointment, req) {
   if (!appointmentId || !doctorId || !addressId || !appointmentDate || !appointmentTime) {
     throw new Error('appointmentId, doctorId, addressId, appointmentDate, appointmentTime are required to cancel a slot');
   }
-  await DoctorSlotModel.updateOne(
+
+  const result = await DoctorSlotModel.updateOne(
     {
       doctorId,
       addressId,
@@ -320,12 +369,48 @@ async function cancelSlot(appointment, req) {
         {
           "elem.appointmentId": appointmentId,
           "elem.time": appointmentTime,
-          "elem.status": { $in: ["booked", "unavailable"] }
+          "elem.status": { $in: ["booked", "pending", "unavailable"] }
         }
       ]
     }
   );
+  console.log("cancelSlotresult",result)
 }
+
+exports.releaseDoctorSlot = async (req, res) => {
+  const appointment = req.body.appointmentDetails;
+  const appointmentId = appointment.appointmentId;
+const reason = req.body.reason || 'Slot released due to payment failure';
+  if (!appointment.doctorId || !appointment.appointmentId) {
+    return res.status(400).json({ status: "fail", message: "doctorId and appointmentId are required" });
+  }
+  try {
+        await cancelSlot(appointment, req);
+
+         /**
+     * Update the appointment status to 'cancelled'
+     * This will mark the appointment as cancelled and store the cancellation reason
+     */
+    const updateAppointment = await appointmentModel.findOneAndUpdate(
+      { "appointmentId": appointmentId },
+      {
+        $set: {
+          appointmentStatus: 'cancelled',
+          cancellationReason: reason,
+          updatedBy: req.headers ? req.headers.userid : '',
+          updatedAt: new Date()
+        }
+      },
+      { new: true }
+    );
+
+
+    res.json({ status: "success", message: "Slot released successfully" });
+  } catch (err) {
+    console.error('Error in releaseDoctorSlot:', err);
+    res.status(500).json({ status: "fail", message: err.message });
+  }
+};
 
 exports.getAppointmentTypeCounts = async (req, res) => {
   const { doctorId } = req.query;

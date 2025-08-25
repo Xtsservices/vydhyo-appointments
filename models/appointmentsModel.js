@@ -79,7 +79,7 @@ const appointmentSchema = new mongoose.Schema({
 	followUpMetadata: {
 		type: {
 			type: String,
-			enum: ['free', 'paid'],
+			enum: ['free', 'paid',],
 			default: 'free'
 		},
 		scheduledBy: {
