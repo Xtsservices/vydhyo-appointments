@@ -175,6 +175,26 @@ exports.getSlotsByDoctorIdAndDate = async (req, res) => {
   return res.status(200).json({ status: 'success', data: slots });
 };
 
+// Duplicate API for WhatsApp integration
+exports.getSlotsByDoctorIdAndDateForWhatsapp = async (req, res) => {
+  const { doctorId, date, addressId } = req.query;
+  if (!doctorId || !date || !addressId) {
+    return res.status(400).json({
+      status: 'fail',
+      message: 'doctorId, date, and addressId are required',
+    });
+  }
+  const slotDate = new Date(date);
+  const slots = await DoctorSlotModel.findOne({ doctorId, addressId, date: slotDate });
+  if (!slots) {
+    return res.status(404).json({
+      status: 'fail',
+      message: 'No slots found for this doctor on the specified date',
+    });
+  }
+  return res.status(200).json({ status: 'success', data: slots });
+};
+
 exports.updateDoctorSlots = async (req, res) => {
   const { doctorId, date, timeSlots = [], addressId } = req.body;
 console.log('Updating slots for:', { doctorId, date, timeSlots, addressId }, req.body);
