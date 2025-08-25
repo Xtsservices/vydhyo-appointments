@@ -48,7 +48,7 @@ const appointmentSchema = new mongoose.Schema({
 	},
 	appointmentStatus: {
 		type: String,
-		enum: ['pending', 'scheduled', 'completed', 'cancelled', 'rescheduled'],
+		enum: ['pending', 'scheduled', 'completed', 'cancelled', 'rescheduled', 'paymentfailed'],
 		default: 'pending'
 	},
 	appointmentNotes: {
@@ -79,7 +79,7 @@ const appointmentSchema = new mongoose.Schema({
 	followUpMetadata: {
 		type: {
 			type: String,
-			enum: ['free', 'paid'],
+			enum: ['free', 'paid',],
 			default: 'free'
 		},
 		scheduledBy: {
