@@ -52,7 +52,6 @@ exports.createSlotsForDoctor = async (req, res) => {
  // Collect all existing times and their associated clinic names
       const allExistingTimes = new Map();
       for (const doc of existingSlotsAcrossAddresses) {
-        let clinicName = doc.addressId; // Fallback to addressId
         try {
           const response = await axios.get(
             `http://localhost:4002/users/getClinicNameByID/${doc.addressId}`,
@@ -64,13 +63,22 @@ exports.createSlotsForDoctor = async (req, res) => {
               }
             }
           );
-          clinicName = response.data.clinicName || doc.addressId;
+           const clinicName = response.data.clinicName;
+const clinicStatus = response.data.clinicStatus;  // 👈 use the field returned above
+
+if (clinicStatus !== "Active") {
+  console.log(`Skipping inactive clinic ${clinicName}`);
+  continue;
+}
+ doc.slots.forEach(slot => {
+          allExistingTimes.set(slot.time, clinicName);
+        });
+        
+          console.log(`Fetched clinic name for addressId ${doc.addressId}: ${clinicName}`);
         } catch (apiError) {
           console.error(`Failed to fetch clinic name for addressId ${doc.addressId}:`, apiError.message);
         }
-        doc.slots.forEach(slot => {
-          allExistingTimes.set(slot.time, clinicName);
-        });
+       
       }
 
       // Identify overlapping slots and their times
@@ -164,8 +172,16 @@ exports.getSlotsByDoctorIdAndDate = async (req, res) => {
       message: 'doctorId, date, and addressId are required',
     });
   }
+ 
+
   const slotDate = new Date(date);
+   console.log("Searching for:", {
+  doctorId,
+  addressId,
+  slotDate,
+});
   const slots = await DoctorSlotModel.findOne({ doctorId, addressId, date: slotDate });
+  console.log('Retrieved slots:', slots);
   if (!slots) {
     return res.status(404).json({
       status: 'fail',
