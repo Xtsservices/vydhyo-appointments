@@ -307,7 +307,8 @@ console.log("paymentResponse",paymentResponse)
         appointmentDetails: updatedAppointment,
         paymentDetails: paymentResponse.data,
         appointmentId: req.body.appointmentId,
-        appointmentObjId: appointment._id
+        appointmentObjId: appointment._id,
+        platformfee: PLATFORM_FEE
       }
     });
 

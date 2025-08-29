@@ -26,6 +26,7 @@ require('./cronJobs/completeAppointmentsCron');
 app.use('/appointment', appointmentRoutes);
 app.use('/appointment', slotsRoutes);
 app.use('/whatsappbooking', whatsappRoutes);
+app.use('/whatsappbot', whatsappRoutes);
 
 
 // Connect to MongoDB and start server
