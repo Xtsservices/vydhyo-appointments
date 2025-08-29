@@ -26,7 +26,8 @@ const appointmentSchema = Joi.object({
   .required(),
     amount: Joi.number().min(0).required(),
     discount: Joi.number().min(0).default(0),
-    discountType: Joi.string().valid('percentage', 'flat').default('flat')
+    discountType: Joi.string().valid('percentage', 'flat').default('flat'),
+    referralCode: Joi.string().allow(null, '').optional(),
 });
 
 module.exports = appointmentSchema;

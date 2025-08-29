@@ -9,6 +9,7 @@ const { createPayment, getAppointmentPayments, updatePayment } = require('../ser
 const moment = require('moment-timezone');
 const { parseFlexibleDate } = require('../utils/utils');
 const axios = require('axios'); // Add axios for making HTTP requests
+const { PLATFORM_FEE } = require("../utils/fees");
 
 exports.updateAppointmentStatus = async (req, res) => {
   try {
@@ -51,6 +52,55 @@ console.log("appointmentId",appointmentId)
   }
 };
 
+async function cancelSlotAndUpdateAppointmentStatus(appointment, req, reason) {
+  const { appointmentId, doctorId, addressId, appointmentDate, appointmentTime } = appointment;
+  if (!appointmentId || !doctorId || !addressId || !appointmentDate || !appointmentTime) {
+    throw new Error('appointmentId, doctorId, addressId, appointmentDate, appointmentTime are required to cancel a slot');
+  }
+
+  // Update DoctorSlotModel to release the slot
+  const slotResult = await DoctorSlotModel.updateOne(
+    {
+      doctorId,
+      addressId,
+      date: appointmentDate,
+    },
+    {
+      $set: {
+        "slots.$[elem].status": "available",
+        "slots.$[elem].appointmentId": null,
+        "slots.$[elem].updatedBy": req.headers.userid,
+        "slots.$[elem].updatedAt": new Date(),
+      },
+    },
+    {
+      arrayFilters: [
+        {
+          "elem.appointmentId": appointmentId,
+          "elem.time": appointmentTime,
+          "elem.status": { $in: ["booked", "pending", "unavailable"] },
+        },
+      ],
+    }
+  );
+
+  // Update appointmentModel to mark appointment as failed
+  const appointmentResult = await appointmentModel.updateOne(
+    { _id: appointment._id },
+    {
+      $set: {
+        appointmentStatus: "failed",
+        cancellationReason: reason || "Failed to complete booking",
+        updatedBy: req.headers.userid,
+        updatedAt: new Date(),
+      },
+    }
+  );
+
+  console.log("cancelSlotAndUpdateAppointmentStatusResult", { slotResult, appointmentResult, reason });
+  return { slotResult, appointmentResult };
+}
+
 exports.createAppointment = async (req, res) => {
   try {
     // Step 1: Validate Input
@@ -84,7 +134,6 @@ exports.createAppointment = async (req, res) => {
       appointmentTime: req.body.appointmentTime,
       appointmentStatus: { $in: ['pending', 'scheduled'] },
     });
-
     // const checkSlotAvailability = await findSlotByDateTime(req.body.doctorId, req.body.appointmentDate, req.body.appointmentTime);
 
     if (checkSlotAvailable.length > 0) {
@@ -105,8 +154,8 @@ exports.createAppointment = async (req, res) => {
     req.body.appointmentId = SEQUENCE_PREFIX.APPOINTMENTS_SEQUENCE.SEQUENCE.concat(appointmentCounter.seq);
     req.body.createdBy = req.headers?.userid || null;
     req.body.updatedBy = req.headers?.userid || null;
-
-    // step 5.1: Check if the doctor has slots available for the appointment date and time
+console.log("req.body",req.body)
+     // step 5.1: Check if the doctor has slots available for the appointment date and time
     const bookingResult = await bookSlot(req);
     if (!bookingResult || bookingResult.modifiedCount === 0) {
       return res.status(404).json({
@@ -119,8 +168,100 @@ exports.createAppointment = async (req, res) => {
     // Step 6: Call payment API (with newly created appointmentId)
     let paymentResponse = { status: 'pending' };
     let updatedAppointment;
+   // --- Case 1: patientApp with referralCode ---
+if (req.body.appSource === 'patientApp' && req.body.referralCode) {
+  try {
+    // Call users service to check referral status
+    const referralResp = await axios.get(
+      `http://localhost:4001/auth/referral/${req.body.referralCode}`,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          // Authorization: req.headers.authorization || ''
+        },
+      }
+    );
+    const referral = referralResp.data?.data;
+    console.log("referral", referral);
+    if (!referral) {
+     await cancelSlotAndUpdateAppointmentStatus(appointment, req, 'Invalid referral code'); // 🔴 release slot
+      return res.status(404).json({
+        status: 'fail',
+        message: 'Invalid referral code',
+      });
+    }
+     // ✅ Ensure referral belongs to the same user who is booking
+    if (referral.referredTo !== req.body.createdBy) {
+       await cancelSlotAndUpdateAppointmentStatus(appointment, req, 'Referral code not valid for this user'); 
+      return res.status(400).json({
+        status: 'fail',
+        message: 'This referral code is not valid for this user',
+      });
+    }
+    if (referral.status === 'completed') {
+       await cancelSlotAndUpdateAppointmentStatus(appointment, req, 'Referral already used');
+      return res.status(400).json({
+        status: 'fail',
+        message: 'Referral already used',
+      });
+    }
+  
+    if (referral.status === 'pending') {
+      // Create free payment
+      paymentResponse = await createPayment(req.headers.authorization, {
+        userId: req.body.userId,
+        doctorId: req.body.doctorId,
+        addressId: req.body.addressId,
+        appointmentId: req.body.appointmentId,
+        actualAmount: req.body.amount,
+         discount: req.body.discount || 0,
+        discountType: req.body.discountType,
+        // discountType: 'referral',
+        finalAmount: req.body.finalAmount,
+        paymentStatus: 'paid',
+        paymentMethod: 'free',
+        paymentFrom: 'appointment',
+        appSource: req.body.appSource,
+        platformFee : PLATFORM_FEE
+      });
+console.log("paymentResponse",paymentResponse)
+        if (!paymentResponse || paymentResponse.status !== 'success') {
+        return res.status(500).json({
+          status: 'fail',
+          message: 'Payment failed, appointment not created.',
+        });
+      }
 
-    if (req.body.paymentStatus === 'paid' && (req.body.appSource !== 'patientApp')) {
+       // Update referral status to completed
+          const referralUpdateResp = await axios.patch(
+            `http://localhost:4001/auth/referral/${req.body.referralCode}/${referral.referredTo}`,
+            { status: 'completed' },
+            {
+              headers: {
+                'Content-Type': 'application/json',
+              },
+            }
+          );
+          console.log("referralUpdateResp", referralUpdateResp.data);
+
+      // Update appointment status to scheduled
+      updatedAppointment = await appointmentModel.findByIdAndUpdate(
+        appointment._id,
+        { appointmentStatus: 'scheduled' },
+        { new: true }
+      );
+    }
+  } catch (err) {
+    console.error('Error verifying referral:', err.message);
+     await cancelSlotAndUpdateAppointmentStatus(appointment, req, 'Error verifying referral');
+    return res.status(500).json({
+      status: 'fail',
+      message: 'Error verifying referral',
+      error: err.message,
+    });
+  }
+}
+   else if (req.body.paymentStatus === 'paid' && (req.body.appSource !== 'patientApp')) {
       paymentResponse = await createPayment(req.headers.authorization, {
         userId: req.body.userId,
         doctorId: req.body.doctorId,
