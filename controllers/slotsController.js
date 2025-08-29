@@ -5,7 +5,13 @@ const { sortSlotsByTime } = require('../utils/utils');
 const Joi = require('joi');
 const axios = require('axios');
 
-exports.createSlotsForDoctor = async (req, res) => {
+function toMinutes(t) {
+  const [hours, minutes] = t.split(':').map(Number);
+  return hours * 60 + minutes;
+}
+
+
+exports.createSlotsForDoctor2 = async (req, res) => {
   const requiredFields = ['doctorId', 'addressId', 'dates', 'startTime', 'endTime', 'interval'];
   const missingFields = requiredFields.filter(
     key => req.body[key] === undefined || req.body[key] === null || req.body[key] === ''
@@ -19,6 +25,7 @@ exports.createSlotsForDoctor = async (req, res) => {
   }
 
   const { doctorId, addressId, dates, startTime, endTime, interval } = req.body;
+  console.log('Creating slots for:', { doctorId, addressId, dates, startTime, endTime, interval });
 
   if (!Array.isArray(dates) || dates.length === 0) {
     return res.status(400).json({
@@ -28,6 +35,7 @@ exports.createSlotsForDoctor = async (req, res) => {
   }
 
   const slotsToCreate = generateSlots(startTime, endTime, interval, req);
+  console.log('Generated slots:', slotsToCreate);
 
   const results = [];
 
@@ -140,6 +148,326 @@ if (clinicStatus !== "Active") {
         } else {
           results.push({ date: dateStr, status: 'skipped', reason: 'All slots already exist' });
         }
+      } else {
+        const sortedSlots = sortSlotsByTime(slotsToCreate);
+        await DoctorSlotModel.create({
+          doctorId,
+          addressId,
+          date: new Date(slotDate),
+          slots: sortedSlots,
+          createdBy: req.headers.userid,
+          createdAt: new Date()
+        });
+        results.push({ date: dateStr, status: 'created', added: sortedSlots.length });
+      }
+    } catch (err) {
+      results.push({ date: dateStr, status: 'error', reason: err.message });
+    }
+  }
+
+  return res.status(200).json({
+    status: 'success',
+    message: 'Slot creation processed',
+    results
+  });
+};
+
+//it is adding non overlapping slots only, not deleting previous slots
+exports.createSlotsForDoctor = async (req, res) => {
+  const requiredFields = ['doctorId', 'addressId', 'dates', 'startTime', 'endTime', 'interval'];
+  const missingFields = requiredFields.filter(
+    key => req.body[key] === undefined || req.body[key] === null || req.body[key] === ''
+  );
+
+  if (missingFields.length > 0) {
+    return res.status(400).json({
+      status: 'fail',
+      message: `${missingFields.join(', ')} ${missingFields.length > 1 ? 'are' : 'is'} required`
+    });
+  }
+
+  const { doctorId, addressId, dates, startTime, endTime, interval } = req.body;
+  console.log('Creating slots for:', { doctorId, addressId, dates, startTime, endTime, interval });
+
+  if (!Array.isArray(dates) || dates.length === 0) {
+    return res.status(400).json({
+      status: 'fail',
+      message: 'dates must be a non-empty array'
+    });
+  }
+
+  if (interval <= 0) {
+    return res.status(400).json({
+      status: 'fail',
+      message: 'interval must be positive'
+    });
+  }
+
+  const slotsToCreate = generateSlots(startTime, endTime, interval, req);
+  console.log('Generated slots:', slotsToCreate);
+
+  const results = [];
+
+  for (const dateStr of dates) {
+    const slotDate = new Date(dateStr);
+    const { error } = doctorSlotSchema.validate({ doctorId, addressId, date: slotDate, slots: slotsToCreate });
+    if (error) {
+      return res.status(400).json({
+        status: 'fail',
+        message: error.details[0].message,
+      });
+    }
+
+    try {
+      // Check for existing slots for the doctor on the same date across ALL addresses
+      const existingSlotsAcrossAddresses = await DoctorSlotModel.find({
+        doctorId,
+        date: new Date(slotDate)
+      });
+
+      // Collect time ranges for slots at DIFFERENT addresses
+      const allExistingTimeRanges = [];
+      for (const doc of existingSlotsAcrossAddresses) {
+        // Skip if the existing slots are for the same address
+        if (doc.addressId === addressId) {
+          continue;
+        }
+        try {
+          const response = await axios.get(
+            `http://localhost:4002/users/getClinicNameByID/${doc.addressId}`,
+            {
+              headers: {
+                'Content-Type': 'application/json',
+              }
+            }
+          );
+          const { clinicName, clinicStatus } = response.data;
+          if (clinicStatus !== "Active") {
+            console.log(`Skipping inactive clinic ${clinicName}`);
+            continue;
+          }
+          doc.slots.forEach(slot => {
+            const startMinutes = toMinutes(slot.time);
+            const endMinutes = startMinutes + interval; // Using current interval as proxy
+            allExistingTimeRanges.push({
+              start: startMinutes,
+              end: endMinutes,
+              clinic: clinicName
+            });
+          });
+          console.log(`Fetched clinic name for addressId ${doc.addressId}: ${clinicName}`);
+        } catch (apiError) {
+          console.error(`Failed to fetch clinic name for addressId ${doc.addressId}:`, apiError.message);
+        }
+      }
+
+      // Check for overlaps with slots at different addresses
+      const overlappingSlots = slotsToCreate
+        .map(slot => {
+          const newStart = toMinutes(slot.time);
+          const newEnd = newStart + interval;
+          const overlap = allExistingTimeRanges.find(range => 
+            newStart < range.end && newEnd > range.start
+          );
+          return overlap ? { time: slot.time, clinic: overlap.clinic } : null;
+        })
+        .filter(Boolean);
+
+      if (overlappingSlots.length > 0) {
+        const overlapsByClinic = overlappingSlots.reduce((acc, { time, clinic }) => {
+          if (!acc[clinic]) acc[clinic] = [];
+          acc[clinic].push(time);
+          return acc;
+        }, {});
+        const overlaps = Object.entries(overlapsByClinic).map(([clinic, times]) => ({
+          clinic,
+          times: times.sort()
+        }));
+        results.push({
+          date: dateStr,
+          status: 'skipped',
+          reason: 'Some slots overlap with existing slots at other clinics',
+          overlaps
+        });
+        continue;
+      }
+
+      // No overlaps with other addresses, proceed to save or append
+      const existing = await DoctorSlotModel.findOne({ doctorId, addressId, date: new Date(slotDate) });
+      if (existing) {
+        const existingTimes = new Set(existing.slots.map(s => s.time));
+        const newUniqueSlots = slotsToCreate.filter(s => !existingTimes.has(s.time));
+
+        if (newUniqueSlots.length > 0) {
+          existing.slots.push(...newUniqueSlots);
+          existing.slots = sortSlotsByTime(existing.slots);
+          await existing.save();
+          results.push({ date: dateStr, status: 'appended', added: newUniqueSlots.length });
+        } else {
+          results.push({ date: dateStr, status: 'skipped', reason: 'All slots already exist' });
+        }
+      } else {
+        const sortedSlots = sortSlotsByTime(slotsToCreate);
+        await DoctorSlotModel.create({
+          doctorId,
+          addressId,
+          date: new Date(slotDate),
+          slots: sortedSlots,
+          createdBy: req.headers.userid,
+          createdAt: new Date()
+        });
+        results.push({ date: dateStr, status: 'created', added: sortedSlots.length });
+      }
+    } catch (err) {
+      results.push({ date: dateStr, status: 'error', reason: err.message });
+    }
+  }
+
+  return res.status(200).json({
+    status: 'success',
+    message: 'Slot creation processed',
+    results
+  });
+};
+
+
+//deleting previous slots if we want to update the slots
+exports.createSlotsForDoctor2 = async (req, res) => {
+  const requiredFields = ['doctorId', 'addressId', 'dates', 'startTime', 'endTime', 'interval'];
+  const missingFields = requiredFields.filter(
+    key => req.body[key] === undefined || req.body[key] === null || req.body[key] === ''
+  );
+
+  if (missingFields.length > 0) {
+    return res.status(400).json({
+      status: 'fail',
+      message: `${missingFields.join(', ')} ${missingFields.length > 1 ? 'are' : 'is'} required`
+    });
+  }
+
+  const { doctorId, addressId, dates, startTime, endTime, interval } = req.body;
+  console.log('Creating slots for:', { doctorId, addressId, dates, startTime, endTime, interval });
+
+  if (!Array.isArray(dates) || dates.length === 0) {
+    return res.status(400).json({
+      status: 'fail',
+      message: 'dates must be a non-empty array'
+    });
+  }
+
+  if (interval <= 0) {
+    return res.status(400).json({
+      status: 'fail',
+      message: 'interval must be positive'
+    });
+  }
+
+  const slotsToCreate = generateSlots(startTime, endTime, interval, req);
+  console.log('Generated slots:', slotsToCreate);
+
+  const results = [];
+
+  for (const dateStr of dates) {
+    const slotDate = new Date(dateStr);
+    const { error } = doctorSlotSchema.validate({ doctorId, addressId, date: slotDate, slots: slotsToCreate });
+    if (error) {
+      return res.status(400).json({
+        status: 'fail',
+        message: error.details[0].message,
+      });
+    }
+
+    try {
+      // Check for existing slots for the doctor on the same date across OTHER addresses
+      const existingSlotsAcrossAddresses = await DoctorSlotModel.find({
+        doctorId,
+        date: new Date(slotDate),
+        addressId: { $ne: addressId }
+      });
+
+      // Collect time ranges for slots at different addresses
+      const allExistingTimeRanges = [];
+      for (const doc of existingSlotsAcrossAddresses) {
+        try {
+          const response = await axios.get(
+            `http://localhost:4002/users/getClinicNameByID/${doc.addressId}`,
+            {
+              headers: {
+                'Content-Type': 'application/json',
+              }
+            }
+          );
+          const { clinicName, clinicStatus } = response.data;
+          if (clinicStatus !== "Active") {
+            console.log(`Skipping inactive clinic ${clinicName}`);
+            continue;
+          }
+          doc.slots.forEach(slot => {
+            const startMinutes = toMinutes(slot.time);
+            const endMinutes = startMinutes + interval; // Using current interval as proxy
+            allExistingTimeRanges.push({
+              start: startMinutes,
+              end: endMinutes,
+              clinic: clinicName
+            });
+          });
+          console.log(`Fetched clinic name for addressId ${doc.addressId}: ${clinicName}`);
+        } catch (apiError) {
+          console.error(`Failed to fetch clinic name for addressId ${doc.addressId}:`, apiError.message);
+        }
+      }
+
+      // Check for overlaps with slots at different addresses
+      const overlappingSlots = slotsToCreate
+        .map(slot => {
+          const newStart = toMinutes(slot.time);
+          const newEnd = newStart + interval;
+          const overlap = allExistingTimeRanges.find(range => 
+            newStart < range.end && newEnd > range.start
+          );
+          return overlap ? { time: slot.time, clinic: overlap.clinic } : null;
+        })
+        .filter(Boolean);
+
+      if (overlappingSlots.length > 0) {
+        const overlapsByClinic = overlappingSlots.reduce((acc, { time, clinic }) => {
+          if (!acc[clinic]) acc[clinic] = [];
+          acc[clinic].push(time);
+          return acc;
+        }, {});
+        const overlaps = Object.entries(overlapsByClinic).map(([clinic, times]) => ({
+          clinic,
+          times: times.sort()
+        }));
+        results.push({
+          date: dateStr,
+          status: 'skipped',
+          reason: 'Some slots overlap with existing slots at other clinics',
+          overlaps
+        });
+        continue;
+      }
+
+      // Check for existing slots at the same address
+      const existing = await DoctorSlotModel.findOne({ doctorId, addressId, date: new Date(slotDate) });
+      if (existing) {
+        const startMinutes = toMinutes(startTime);
+        const endMinutes = toMinutes(endTime);
+        // Keep slots outside the requested time range
+        const retainedSlots = existing.slots.filter(slot => {
+          const slotMinutes = toMinutes(slot.time);
+          return slotMinutes < startMinutes || slotMinutes >= endMinutes;
+        });
+        // Add new slots
+        existing.slots = [...retainedSlots, ...slotsToCreate];
+        existing.slots = sortSlotsByTime(existing.slots);
+        await existing.save();
+        results.push({
+          date: dateStr,
+          status: 'appended',
+          added: slotsToCreate.length,
+          replaced: existing.slots.length - retainedSlots.length - slotsToCreate.length
+        });
       } else {
         const sortedSlots = sortSlotsByTime(slotsToCreate);
         await DoctorSlotModel.create({
