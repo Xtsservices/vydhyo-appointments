@@ -1,4 +1,3 @@
-const AWS = require('aws-sdk');
 const mongoose = require("mongoose");
 const appointmentModel = require('../models/appointmentsModel');
 const sequenceSchema = require('../sequence/sequenceSchema');
@@ -12,12 +11,29 @@ const { parseFlexibleDate } = require('../utils/utils');
 const axios = require('axios'); // Add axios for making HTTP requests
 const { PLATFORM_FEE } = require("../utils/fees");
 
-// ✅ Configure AWS S3
-const s3 = new AWS.S3({
-  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  region: process.env.AWS_REGION
+const {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand
+} = require("@aws-sdk/client-s3");
+
+const AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME;
+const AWS_BUCKET_REGION = process.env.AWS_REGION;
+const AWS_ACCESS_KEY = process.env.AWS_ACCESS_KEY_ID;
+const AWS_SECRET_KEY = process.env.AWS_SECRET_ACCESS_KEY;
+
+const s3Client = new S3Client({
+  region: AWS_BUCKET_REGION,
+  credentials: {
+    accessKeyId: AWS_ACCESS_KEY,
+    secretAccessKey: AWS_SECRET_KEY
+  }
 });
+
+
+
+
+
 
 exports.updateAppointmentStatus = async (req, res) => {
   try {
@@ -176,8 +192,8 @@ console.log("req.body",req.body)
         Body: fileContent,
         ContentType: req.file.mimetype,
       };
-
-      const s3Upload = await s3.upload(uploadParams).promise();
+      
+      const s3Upload = await s3Client.send(new PutObjectCommand(uploadParams));
       req.body.medicalReport = s3Upload.Location; // ✅ store file URL in DB
 
       // cleanup temp file
