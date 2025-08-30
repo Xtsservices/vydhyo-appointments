@@ -29,6 +29,9 @@ exports.getSlotsByDoctorIdAndDateForWhatsapp = async (req, res) => {
 
 
 exports.booking = async (req, res) => {
+  console.log("whatsappbot","hello100");
+
+  console.log("whatsappbot",req.body);
   return res.status(200).json({
     status: 'success',
     message: 'Booking done',
