@@ -28,6 +28,16 @@ const appointmentSchema = Joi.object({
     discount: Joi.number().min(0).default(0),
     discountType: Joi.string().valid('percentage', 'flat').default('flat'),
     referralCode: Joi.string().allow(null, '').optional(),
+    medicalReport: Joi.string().allow(null, '').optional(),
+
+    homeAddress: Joi.object({
+        building: Joi.string().required(),
+        floorFlat: Joi.string().required(),
+        street: Joi.string().required(),
+        landmark: Joi.string().allow(null, ''),
+        cityState: Joi.string().required(),
+        pincode: Joi.string().required(),
+    }).optional(),
 });
 
 module.exports = appointmentSchema;

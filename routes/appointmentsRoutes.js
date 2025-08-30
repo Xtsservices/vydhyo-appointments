@@ -25,7 +25,9 @@ const {
   releaseDoctorSlot
 } = require('../controllers/appointmentsController');
 
-router.post('/createAppointment', createAppointment);
+// router.post('/createAppointment', createAppointment);
+router.post('/createAppointment',upload.single('medicalReport'), createAppointment);
+
 //After sdk Payment success
 router.post('/updateAppointmentStatus', updateAppointmentStatus);
 //after payment failure
