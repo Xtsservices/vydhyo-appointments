@@ -11,6 +11,30 @@ const { parseFlexibleDate } = require('../utils/utils');
 const axios = require('axios'); // Add axios for making HTTP requests
 const { PLATFORM_FEE } = require("../utils/fees");
 
+const {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand
+} = require("@aws-sdk/client-s3");
+
+const AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME;
+const AWS_BUCKET_REGION = process.env.AWS_REGION;
+const AWS_ACCESS_KEY = process.env.AWS_ACCESS_KEY_ID;
+const AWS_SECRET_KEY = process.env.AWS_SECRET_ACCESS_KEY;
+
+const s3Client = new S3Client({
+  region: AWS_BUCKET_REGION,
+  credentials: {
+    accessKeyId: AWS_ACCESS_KEY,
+    secretAccessKey: AWS_SECRET_KEY
+  }
+});
+
+
+
+
+
+
 exports.updateAppointmentStatus = async (req, res) => {
   try {
     const {appointmentId} = req.body;
@@ -155,6 +179,28 @@ exports.createAppointment = async (req, res) => {
     req.body.createdBy = req.headers?.userid || null;
     req.body.updatedBy = req.headers?.userid || null;
 console.log("req.body",req.body)
+
+// ✅ Step 5: Handle optional medicalReport (upload to S3)
+    if (req.file) {
+      const fileContent = fs.readFileSync(req.file.path);
+      const fileExt = path.extname(req.file.originalname);
+      const s3Key = `medicalReports/${req.body.appointmentId}_${Date.now()}${fileExt}`;
+
+      const uploadParams = {
+        Bucket: process.env.AWS_BUCKET_NAME,
+        Key: s3Key,
+        Body: fileContent,
+        ContentType: req.file.mimetype,
+      };
+      
+      const s3Upload = await s3Client.send(new PutObjectCommand(uploadParams));
+      req.body.medicalReport = s3Upload.Location; // ✅ store file URL in DB
+
+      // cleanup temp file
+      fs.unlinkSync(req.file.path);
+    }
+
+
      // step 5.1: Check if the doctor has slots available for the appointment date and time
     const bookingResult = await bookSlot(req);
     if (!bookingResult || bookingResult.modifiedCount === 0) {
