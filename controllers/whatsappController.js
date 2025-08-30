@@ -8,6 +8,9 @@ import axios from 'axios';
 // If you use Buffer, import it from 'buffer'
 import { Buffer } from 'buffer';
 
+import { v4 as uuidv4 } from 'uuid';
+
+
 
 
 // Duplicate API for WhatsApp integration
@@ -368,3 +371,7 @@ export const booking = async (req, res) => {
     message: 'Booking done',
   });
 };
+
+function generateUuid() {
+  return uuidv4();
+}
