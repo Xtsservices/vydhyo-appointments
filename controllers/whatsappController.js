@@ -214,6 +214,7 @@ const vydhyobot = async (body) => {
   else if (!vydhyoSession.clinic) {
     if (vydhyoSession.clinics && Number(text) >= 1 && Number(text) <= vydhyoSession.clinics.length) {
       vydhyoSession.clinic = vydhyoSession.clinics[Number(text) - 1];
+      console.log("Selected clinic:", vydhyoSession.clinic);
       vydhyoSession.addressId = vydhyoSession.clinic.addressId;
 
       // Generate today + next 3 days
