@@ -24,7 +24,7 @@ const appointmentSchema = Joi.object({
   discount: Joi.number().min(0).default(0),
   discountType: Joi.string().valid("percentage", "flat").default("flat"),
   referralCode: Joi.string().allow(null, "").optional(),
-
+paymentMethod: Joi.string().allow(null, "").optional(),
   medicalReport: Joi.object({
     uri: Joi.string().required(),
     name: Joi.string().required(),
