@@ -111,21 +111,13 @@ const appointmentSchema = new mongoose.Schema({
 		type: String,
 		default: null
 	},
-	// ✅ Optional address object, but strict inside
+
 	homeAddress: {
-		type: new mongoose.Schema(
-			{
-				building: { type: String, required: true },
-				floorFlat: { type: String, required: true },
-				street: { type: String, required: true },
-				landmark: { type: String, default: null },
-				cityState: { type: String, required: true },
-				pincode: { type: String, required: true }
-			},
-			{ _id: false } // prevent extra _id for subdocument
-		),
-		required: false
+		type: String,
+		default: null
 	}
+
+	
 });
 
 module.exports = mongoose.model('appointments', appointmentSchema);

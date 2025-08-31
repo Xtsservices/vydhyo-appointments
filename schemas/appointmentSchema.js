@@ -34,14 +34,8 @@ paymentMethod: Joi.string().allow(null, "").optional(),
     .allow(null)
     .optional(),
 
-  homeAddress: Joi.object({
-    building: Joi.string().required(),
-    floorFlat: Joi.string().required(),
-    street: Joi.string().required(),
-    landmark: Joi.string().allow(null, ""),
-    cityState: Joi.string().required(),
-    pincode: Joi.string().required(),
-  }).optional(),
+  homeAddress: Joi.string().allow(null, "").optional(),
+
 });
 
 module.exports = appointmentSchema;
