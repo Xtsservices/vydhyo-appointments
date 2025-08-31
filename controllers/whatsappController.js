@@ -210,12 +210,10 @@ const vydhyobot = async (body) => {
       reply = `❓ I didn't understand that. Please select a valid doctor number:\n${vydhyoSession.doctors?.map((d, i) => `${i + 1}) ${d.firstname} ${d.lastname}`).join('\n')}`;
     }
   }
-  
   // 4. Clinic selection
   else if (!vydhyoSession.clinic) {
     if (vydhyoSession.clinics && Number(text) >= 1 && Number(text) <= vydhyoSession.clinics.length) {
       vydhyoSession.clinic = vydhyoSession.clinics[Number(text) - 1];
-      console.log("Selected clinic:", vydhyoSession.clinic);
       vydhyoSession.addressId = vydhyoSession.clinic.addressId;
 
       // Generate today + next 3 days
@@ -233,7 +231,7 @@ const vydhyobot = async (body) => {
       }
       vydhyoSession.dates = dates.map(date => date.key);
 
-      reply = `You selected clinic: ${vydhyoSession.clinic}\nPlease select a date:\n${dates.map((date, i) => `${i + 1}) ${date.display}`).join('\n')}`;
+      reply = `You selected clinic: ${vydhyoSession.clinic.clinicName}\nPlease select a date:\n${dates.map((date, i) => `${i + 1}) ${date.display}`).join('\n')}`;
       vydhyoSession.stage = 'date_selection';
     } else {
       reply = `❓ I didn't understand that. Please select a valid clinic number:\n${vydhyoSession.clinics?.map((c, i) => `${i + 1}) ${c.clinicName}`).join('\n')}`;
