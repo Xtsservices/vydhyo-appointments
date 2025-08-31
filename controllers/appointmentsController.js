@@ -179,6 +179,7 @@ exports.createAppointment = async (req, res) => {
     req.body.createdBy = req.headers?.userid || null;
     req.body.updatedBy = req.headers?.userid || null;
 console.log("req.body",req.body)
+console.log("req.file",req.file)
 
 // ✅ Step 5: Handle optional medicalReport (upload to S3)
     if (req.file) {
