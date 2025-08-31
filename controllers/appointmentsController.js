@@ -1,61 +1,99 @@
 const mongoose = require("mongoose");
-const appointmentModel = require('../models/appointmentsModel');
-const sequenceSchema = require('../sequence/sequenceSchema');
-const appointmentSchema = require('../schemas/appointmentSchema');
-const DoctorSlotModel = require('../models/doctorSlotsModel');
-const { SEQUENCE_PREFIX } = require('../utils/constants');
-const { getUserDetailsBatch } = require('../services/userService');
-const { createPayment, getAppointmentPayments, updatePayment } = require('../services/paymentService');
-const moment = require('moment-timezone');
-const { parseFlexibleDate } = require('../utils/utils');
-const axios = require('axios'); // Add axios for making HTTP requests
+const appointmentModel = require("../models/appointmentsModel");
+const sequenceSchema = require("../sequence/sequenceSchema");
+const appointmentSchema = require("../schemas/appointmentSchema");
+const DoctorSlotModel = require("../models/doctorSlotsModel");
+const { SEQUENCE_PREFIX } = require("../utils/constants");
+const { getUserDetailsBatch } = require("../services/userService");
+const {
+  createPayment,
+  getAppointmentPayments,
+  updatePayment,
+} = require("../services/paymentService");
+const moment = require("moment-timezone");
+const { parseFlexibleDate } = require("../utils/utils");
+const axios = require("axios"); // Add axios for making HTTP requests
 const { PLATFORM_FEE } = require("../utils/fees");
+const fs = require("fs");
+const path = require("path");
+const {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+} = require("@aws-sdk/client-s3");
+
+const AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME;
+const AWS_BUCKET_REGION = process.env.AWS_REGION;
+const AWS_ACCESS_KEY = process.env.AWS_ACCESS_KEY_ID;
+const AWS_SECRET_KEY = process.env.AWS_SECRET_ACCESS_KEY;
+
+const s3Client = new S3Client({
+  region: AWS_BUCKET_REGION,
+  credentials: {
+    accessKeyId: AWS_ACCESS_KEY,
+    secretAccessKey: AWS_SECRET_KEY,
+  },
+});
 
 exports.updateAppointmentStatus = async (req, res) => {
   try {
-    const {appointmentId} = req.body;
-console.log("appointmentId",appointmentId)
+    const { appointmentId } = req.body;
+    console.log("appointmentId", appointmentId);
     // Validate input
     if (!appointmentId) {
       return res.status(400).json({
-        status: 'fail',
-        message: 'Appointment ID is required',
+        status: "fail",
+        message: "Appointment ID is required",
       });
     }
 
     // Update appointment status
     const updatedAppointment = await appointmentModel.findOneAndUpdate(
-  { appointmentId: appointmentId },   // match your custom appointmentId field
-  { appointmentStatus: "scheduled" },
-  { new: true }
-);
+      { appointmentId: appointmentId }, // match your custom appointmentId field
+      { appointmentStatus: "scheduled" },
+      { new: true }
+    );
 
     if (!updatedAppointment) {
       return res.status(404).json({
-        status: 'fail',
-        message: 'Appointment not found',
+        status: "fail",
+        message: "Appointment not found",
       });
     }
 
     res.status(200).json({
-      status: 'success',
+      status: "success",
       data: {
         appointment: updatedAppointment,
       },
     });
   } catch (error) {
-    console.error('Error updating appointment status:', error);
+    console.error("Error updating appointment status:", error);
     res.status(500).json({
-      status: 'error',
-      message: 'Internal server error',
+      status: "error",
+      message: "Internal server error",
     });
   }
 };
 
 async function cancelSlotAndUpdateAppointmentStatus(appointment, req, reason) {
-  const { appointmentId, doctorId, addressId, appointmentDate, appointmentTime } = appointment;
-  if (!appointmentId || !doctorId || !addressId || !appointmentDate || !appointmentTime) {
-    throw new Error('appointmentId, doctorId, addressId, appointmentDate, appointmentTime are required to cancel a slot');
+  const {
+    appointmentId,
+    doctorId,
+    addressId,
+    appointmentDate,
+    appointmentTime,
+  } = appointment;
+  if (
+    !appointmentId ||
+    !doctorId ||
+    !addressId ||
+    !appointmentDate ||
+    !appointmentTime
+  ) {
+    throw new Error(
+      "appointmentId, doctorId, addressId, appointmentDate, appointmentTime are required to cancel a slot"
+    );
   }
 
   // Update DoctorSlotModel to release the slot
@@ -97,7 +135,11 @@ async function cancelSlotAndUpdateAppointmentStatus(appointment, req, reason) {
     }
   );
 
-  console.log("cancelSlotAndUpdateAppointmentStatusResult", { slotResult, appointmentResult, reason });
+  console.log("cancelSlotAndUpdateAppointmentStatusResult", {
+    slotResult,
+    appointmentResult,
+    reason,
+  });
   return { slotResult, appointmentResult };
 }
 
@@ -107,7 +149,7 @@ exports.createAppointment = async (req, res) => {
     const { error } = appointmentSchema.validate(req.body);
     if (error) {
       return res.status(400).json({
-        status: 'fail',
+        status: "fail",
         message: error.details[0].message,
       });
     }
@@ -115,15 +157,15 @@ exports.createAppointment = async (req, res) => {
     // Step 2: Check appointment time validity
     const appointmentDateTime = moment.tz(
       `${req.body.appointmentDate} ${req.body.appointmentTime}`,
-      'YYYY-MM-DD HH:mm',
-      'Asia/Kolkata'
+      "YYYY-MM-DD HH:mm",
+      "Asia/Kolkata"
     );
-    const now = moment.tz('Asia/Kolkata');
+    const now = moment.tz("Asia/Kolkata");
 
     if (appointmentDateTime.isBefore(now)) {
       return res.status(208).json({
-        status: 'fail',
-        message: 'Appointment date & time must not be in the past.',
+        status: "fail",
+        message: "Appointment date & time must not be in the past.",
       });
     }
 
@@ -132,14 +174,14 @@ exports.createAppointment = async (req, res) => {
       doctorId: req.body.doctorId,
       appointmentDate: new Date(req.body.appointmentDate),
       appointmentTime: req.body.appointmentTime,
-      appointmentStatus: { $in: ['pending', 'scheduled'] },
+      appointmentStatus: { $in: ["pending", "scheduled"] },
     });
     // const checkSlotAvailability = await findSlotByDateTime(req.body.doctorId, req.body.appointmentDate, req.body.appointmentTime);
 
     if (checkSlotAvailable.length > 0) {
       return res.status(208).json({
-        status: 'fail',
-        message: 'Slot already booked or unavailable for this date and time',
+        status: "fail",
+        message: "Slot already booked or unavailable for this date and time",
       });
     }
 
@@ -151,117 +193,165 @@ exports.createAppointment = async (req, res) => {
     );
 
     // Step 5: Create appointment
-    req.body.appointmentId = SEQUENCE_PREFIX.APPOINTMENTS_SEQUENCE.SEQUENCE.concat(appointmentCounter.seq);
+    req.body.appointmentId =
+      SEQUENCE_PREFIX.APPOINTMENTS_SEQUENCE.SEQUENCE.concat(
+        appointmentCounter.seq
+      );
     req.body.createdBy = req.headers?.userid || null;
     req.body.updatedBy = req.headers?.userid || null;
-console.log("req.body",req.body)
+
+    // ✅ Step 5: Handle optional medicalReport (upload to S3)
+
+    if (req.file) {
+      const fileExt = path.extname(req.file.originalname);
+      const s3Key = `medicalReports/${
+        req.body.appointmentId
+      }_${Date.now()}${fileExt}`;
+
+      const uploadParams = {
+        Bucket: process.env.AWS_BUCKET_NAME,
+        Key: s3Key,
+        Body: req.file.buffer, // ✅ use buffer, not fs.readFileSync
+        ContentType: req.file.mimetype,
+      };
+
+      await s3Client.send(new PutObjectCommand(uploadParams));
+
+      // Construct public URL (if your bucket is public, otherwise you need signed URLs)
+      req.body.medicalReport = `https://${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${s3Key}`;
+    }
+
+    // step 5.1: Check if the doctor has slots available for the appointment date and time
+    req.body.referralCode = req.body.referralCode || null;
      // step 5.1: Check if the doctor has slots available for the appointment date and time
+
     const bookingResult = await bookSlot(req);
     if (!bookingResult || bookingResult.modifiedCount === 0) {
       return res.status(404).json({
-        status: 'fail',
-        message: 'Slot already booked or slots do not exist check in slot availability.'
+        status: "fail",
+        message:
+          "Slot already booked or slots do not exist check in slot availability.",
       });
     }
     const appointment = await appointmentModel.create(req.body);
 
     // Step 6: Call payment API (with newly created appointmentId)
-    let paymentResponse = { status: 'pending' };
+    let paymentResponse = { status: "pending" };
     let updatedAppointment;
-   // --- Case 1: patientApp with referralCode ---
-if (req.body.appSource === 'patientApp' && req.body.referralCode) {
-  try {
-    // Call users service to check referral status
-    const referralResp = await axios.get(
-      `http://localhost:4001/auth/referral/${req.body.referralCode}`,
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          // Authorization: req.headers.authorization || ''
-        },
-      }
-    );
-    const referral = referralResp.data?.data;
-    console.log("referral", referral);
-    if (!referral) {
-     await cancelSlotAndUpdateAppointmentStatus(appointment, req, 'Invalid referral code'); // 🔴 release slot
-      return res.status(404).json({
-        status: 'fail',
-        message: 'Invalid referral code',
-      });
-    }
-     // ✅ Ensure referral belongs to the same user who is booking
-    if (referral.referredTo !== req.body.createdBy) {
-       await cancelSlotAndUpdateAppointmentStatus(appointment, req, 'Referral code not valid for this user'); 
-      return res.status(400).json({
-        status: 'fail',
-        message: 'This referral code is not valid for this user',
-      });
-    }
-    if (referral.status === 'completed') {
-       await cancelSlotAndUpdateAppointmentStatus(appointment, req, 'Referral already used');
-      return res.status(400).json({
-        status: 'fail',
-        message: 'Referral already used',
-      });
-    }
-  
-    if (referral.status === 'pending') {
-      // Create free payment
-      paymentResponse = await createPayment(req.headers.authorization, {
-        userId: req.body.userId,
-        doctorId: req.body.doctorId,
-        addressId: req.body.addressId,
-        appointmentId: req.body.appointmentId,
-        actualAmount: req.body.amount,
-         discount: req.body.discount || 0,
-        discountType: req.body.discountType,
-        // discountType: 'referral',
-        finalAmount: req.body.finalAmount,
-        paymentStatus: 'paid',
-        paymentMethod: 'free',
-        paymentFrom: 'appointment',
-        appSource: req.body.appSource,
-        platformFee : PLATFORM_FEE
-      });
-console.log("paymentResponse",paymentResponse)
-        if (!paymentResponse || paymentResponse.status !== 'success') {
-        return res.status(500).json({
-          status: 'fail',
-          message: 'Payment failed, appointment not created.',
-        });
-      }
+    // --- Case 1: patientApp with referralCode ---
+    if (req.body.appSource === "patientApp" && req.body.referralCode) {
+      try {
+        // Call users service to check referral status
+        const referralResp = await axios.get(
+          `http://localhost:4001/auth/referral/${req.body.referralCode}`,
+          {
+            headers: {
+              "Content-Type": "application/json",
+              // Authorization: req.headers.authorization || ''
+            },
+          }
+        );
+        const referral = referralResp.data?.data;
+        console.log("referral", referral);
+        if (!referral) {
+          await cancelSlotAndUpdateAppointmentStatus(
+            appointment,
+            req,
+            "Invalid referral code"
+          ); // 🔴 release slot
+          return res.status(404).json({
+            status: "fail",
+            message: "Invalid referral code",
+          });
+        }
+        // ✅ Ensure referral belongs to the same user who is booking
+        if (referral.referredTo !== req.body.createdBy) {
+          await cancelSlotAndUpdateAppointmentStatus(
+            appointment,
+            req,
+            "Referral code not valid for this user"
+          );
+          return res.status(400).json({
+            status: "fail",
+            message: "This referral code is not valid for this user",
+          });
+        }
+        if (referral.status === "completed") {
+          await cancelSlotAndUpdateAppointmentStatus(
+            appointment,
+            req,
+            "Referral already used"
+          );
+          return res.status(400).json({
+            status: "fail",
+            message: "Referral already used",
+          });
+        }
 
-       // Update referral status to completed
+        if (referral.status === "pending") {
+          // Create free payment
+          paymentResponse = await createPayment(req.headers.authorization, {
+            userId: req.body.userId,
+            doctorId: req.body.doctorId,
+            addressId: req.body.addressId,
+            appointmentId: req.body.appointmentId,
+            actualAmount: req.body.amount,
+            discount: req.body.discount || 0,
+            discountType: req.body.discountType,
+            // discountType: 'referral',
+            finalAmount: req.body.finalAmount,
+            paymentStatus: "paid",
+            paymentMethod: "free",
+            paymentFrom: "appointment",
+            appSource: req.body.appSource,
+            platformFee: PLATFORM_FEE,
+          });
+          console.log("paymentResponse", paymentResponse);
+          if (!paymentResponse || paymentResponse.status !== "success") {
+            return res.status(500).json({
+              status: "fail",
+              message: "Payment failed, appointment not created.",
+            });
+          }
+
+          // Update referral status to completed
           const referralUpdateResp = await axios.patch(
             `http://localhost:4001/auth/referral/${req.body.referralCode}/${referral.referredTo}`,
-            { status: 'completed' },
+            { status: 'completed' ,
+              appointmentId: req.body.appointmentId, // Store appointmentId
+            },
             {
               headers: {
-                'Content-Type': 'application/json',
+                "Content-Type": "application/json",
               },
             }
           );
           console.log("referralUpdateResp", referralUpdateResp.data);
 
-      // Update appointment status to scheduled
-      updatedAppointment = await appointmentModel.findByIdAndUpdate(
-        appointment._id,
-        { appointmentStatus: 'scheduled' },
-        { new: true }
-      );
-    }
-  } catch (err) {
-    console.error('Error verifying referral:', err.message);
-     await cancelSlotAndUpdateAppointmentStatus(appointment, req, 'Error verifying referral');
-    return res.status(500).json({
-      status: 'fail',
-      message: 'Error verifying referral',
-      error: err.message,
-    });
-  }
-}
-   else if (req.body.paymentStatus === 'paid' && (req.body.appSource !== 'patientApp')) {
+          // Update appointment status to scheduled
+          updatedAppointment = await appointmentModel.findByIdAndUpdate(
+            appointment._id,
+            { appointmentStatus: "scheduled" },
+            { new: true }
+          );
+        }
+      } catch (err) {
+        console.error("Error verifying referral:", err.message);
+        await cancelSlotAndUpdateAppointmentStatus(
+          appointment,
+          req,
+          "Error verifying referral"
+        );
+        return res.status(500).json({
+          status: "fail",
+          message: "Error verifying referral",
+          error: err.message,
+        });
+      }
+    } else if (
+      req.body.paymentStatus === "paid" &&
+      req.body.appSource !== "patientApp"
+    ) {
       paymentResponse = await createPayment(req.headers.authorization, {
         userId: req.body.userId,
         doctorId: req.body.doctorId,
@@ -271,50 +361,47 @@ console.log("paymentResponse",paymentResponse)
         discount: req.body.discount || 0,
         discountType: req.body.discountType,
         finalAmount: req.body.finalAmount,
-        paymentStatus: 'paid',
-        paymentFrom: 'appointment',
+        paymentStatus: "paid",
+        paymentFrom: "appointment",
         appSource: req.body.appSource,
       });
 
-      if (!paymentResponse || paymentResponse.status !== 'success') {
+      if (!paymentResponse || paymentResponse.status !== "success") {
         return res.status(500).json({
-          status: 'fail',
-          message: 'Payment failed, appointment not created.',
+          status: "fail",
+          message: "Payment failed, appointment not created.",
         });
       }
 
       // Step 7: Update appointment status to 'scheduled' after successful payment
-     updatedAppointment = await appointmentModel.findByIdAndUpdate(
-      appointment._id,
-      { appointmentStatus: 'scheduled' },
-      { new: true }
-    );
+      updatedAppointment = await appointmentModel.findByIdAndUpdate(
+        appointment._id,
+        { appointmentStatus: "scheduled" },
+        { new: true }
+      );
 
-    if (!updatedAppointment) {
-      return res.status(404).json({
-        status: 'fail',
-        message: 'Appointment not created',
-      });
+      if (!updatedAppointment) {
+        return res.status(404).json({
+          status: "fail",
+          message: "Appointment not created",
+        });
+      }
     }
-
-    }
-    
 
     return res.status(200).json({
-      status: 'success',
-      message: 'Appointment created successfully',
+      status: "success",
+      message: "Appointment created successfully",
       data: {
         appointmentDetails: updatedAppointment,
         paymentDetails: paymentResponse.data,
         appointmentId: req.body.appointmentId,
         appointmentObjId: appointment._id,
-        platformfee: PLATFORM_FEE
-      }
+        platformfee: PLATFORM_FEE,
+      },
     });
-
   } catch (error) {
     return res.status(500).json({
-      message: 'Error creating appointment',
+      message: "Error creating appointment",
       error: error.message,
     });
   }
@@ -327,8 +414,8 @@ exports.getAllAppointments = async (req, res) => {
     const appointments = await appointmentModel.find({});
 
     return res.status(200).json({
-      status: 'success',
-      message: 'Appointments retrieved successfully',
+      status: "success",
+      message: "Appointments retrieved successfully",
       data: {
         totalAppointmentsCount: appointments.length,
         totalAppointments: appointments,
@@ -336,8 +423,8 @@ exports.getAllAppointments = async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({
-      status: 'fail',
-      message: 'Error retrieving appointments',
+      status: "fail",
+      message: "Error retrieving appointments",
       error: error.message,
     });
   }
@@ -352,16 +439,19 @@ exports.getAppointmentsWithPayments = async (req, res) => {
       appointmentStatus,
       appointmentDate,
       fromDate,
-      toDate
+      toDate,
     } = req.query;
 
     if (!doctorId) {
-      return res.status(400).json({ status: 'fail', message: "doctorId is required" });
+      return res
+        .status(400)
+        .json({ status: "fail", message: "doctorId is required" });
     }
 
     const query = { doctorId };
     if (appointmentType) query.appointmentType = appointmentType;
-    if (appointmentDepartment) query.appointmentDepartment = appointmentDepartment;
+    if (appointmentDepartment)
+      query.appointmentDepartment = appointmentDepartment;
     if (appointmentStatus) query.appointmentStatus = appointmentStatus;
 
     const parsedAppointmentDate = parseFlexibleDate(appointmentDate);
@@ -392,14 +482,16 @@ exports.getAppointmentsWithPayments = async (req, res) => {
 
     const appointments = await appointmentModel.find(query);
     if (!appointments.length) {
-      return res.status(404).json({ status: 'fail', message: "No appointments found" });
+      return res
+        .status(404)
+        .json({ status: "fail", message: "No appointments found" });
     }
 
     // Prepare user IDs and appointment IDs
     const userIdsSet = new Set();
     const appointmentIds = [];
 
-    appointments.forEach(appt => {
+    appointments.forEach((appt) => {
       userIdsSet.add(appt.userId);
       userIdsSet.add(appt.doctorId);
       appointmentIds.push(appt.appointmentId.toString());
@@ -411,31 +503,32 @@ exports.getAppointmentsWithPayments = async (req, res) => {
     // Call external services in parallel
     const [users, paymentResp] = await Promise.all([
       getUserDetailsBatch(authHeader, { userIds: allUserIds }),
-      getAppointmentPayments(authHeader, { appointmentIds })
+      getAppointmentPayments(authHeader, { appointmentIds }),
     ]);
 
-    const userMap = new Map(users.map(user => [user.userId, user]));
-    const paymentMap = new Map(paymentResp.payments.map(payment => [payment.appointmentId, payment]));
+    const userMap = new Map(users.map((user) => [user.userId, user]));
+    const paymentMap = new Map(
+      paymentResp.payments.map((payment) => [payment.appointmentId, payment])
+    );
 
     // Construct response
-    const result = appointments.map(appt => ({
+    const result = appointments.map((appt) => ({
       ...appt.toObject(),
       patientDetails: userMap.get(appt.userId) || null,
       doctorDetails: userMap.get(appt.doctorId) || null,
-      paymentDetails: paymentMap.get(appt.appointmentId.toString()) || null
+      paymentDetails: paymentMap.get(appt.appointmentId.toString()) || null,
     }));
 
     res.json({ status: "success", data: result });
-
   } catch (err) {
-    console.error('Error in getAppointmentsWithPayments:', err);
-    res.status(500).json({ message: 'Internal Server Error' });
+    console.error("Error in getAppointmentsWithPayments:", err);
+    res.status(500).json({ message: "Internal Server Error" });
   }
 };
 
 async function findSlotByDateTime(doctorId, date, time) {
   if (!doctorId || !date || !time) {
-    throw new Error('doctorId, date and time are required to find a slot');
+    throw new Error("doctorId, date and time are required to find a slot");
   }
 
   const start = new Date(date);
@@ -448,108 +541,140 @@ async function findSlotByDateTime(doctorId, date, time) {
       $elemMatch: {
         status: { $in: ["booked", "unavailable"] },
         time: time,
-        appointmentId: { $ne: null }
-      }
-    }
+        appointmentId: { $ne: null },
+      },
+    },
   };
   return await DoctorSlotModel.find(query);
 }
 
 async function bookSlot(req) {
-  const { doctorId, addressId, appointmentDate, appointmentTime, appointmentId } = req.body;
-  if (!doctorId || !addressId || !appointmentDate || !appointmentTime || !appointmentId) {
-    throw new Error('doctorId, addressId, appointmentDate, appointmentTime and appointmentId are required to book a slot');
+  const {
+    doctorId,
+    addressId,
+    appointmentDate,
+    appointmentTime,
+    appointmentId,
+  } = req.body;
+  if (
+    !doctorId ||
+    !addressId ||
+    !appointmentDate ||
+    !appointmentTime ||
+    !appointmentId
+  ) {
+    throw new Error(
+      "doctorId, addressId, appointmentDate, appointmentTime and appointmentId are required to book a slot"
+    );
   }
   const result = await DoctorSlotModel.updateOne(
     {
       doctorId,
       addressId,
-      date: appointmentDate
+      date: appointmentDate,
     },
     {
       $set: {
         "slots.$[elem].status": "booked",
         "slots.$[elem].appointmentId": appointmentId,
         "slots.$[elem].updatedBy": req.headers.userid,
-        "slots.$[elem].updatedAt": new Date()
-      }
+        "slots.$[elem].updatedAt": new Date(),
+      },
     },
     {
       arrayFilters: [
         {
           "elem.time": appointmentTime,
-          "elem.status": "available"
-        }
-      ]
+          "elem.status": "available",
+        },
+      ],
     }
   );
   return result;
 }
 
 async function cancelSlot(appointment, req) {
-  const { appointmentId, doctorId, addressId, appointmentDate, appointmentTime } = appointment;
-  if (!appointmentId || !doctorId || !addressId || !appointmentDate || !appointmentTime) {
-    throw new Error('appointmentId, doctorId, addressId, appointmentDate, appointmentTime are required to cancel a slot');
+  const {
+    appointmentId,
+    doctorId,
+    addressId,
+    appointmentDate,
+    appointmentTime,
+  } = appointment;
+  if (
+    !appointmentId ||
+    !doctorId ||
+    !addressId ||
+    !appointmentDate ||
+    !appointmentTime
+  ) {
+    throw new Error(
+      "appointmentId, doctorId, addressId, appointmentDate, appointmentTime are required to cancel a slot"
+    );
   }
 
   const result = await DoctorSlotModel.updateOne(
     {
       doctorId,
       addressId,
-      date: appointmentDate
+      date: appointmentDate,
     },
     {
       $set: {
         "slots.$[elem].status": "available",
         "slots.$[elem].appointmentId": null,
         "slots.$[elem].updatedBy": req.headers.userid,
-        "slots.$[elem].updatedAt": new Date()
-      }
+        "slots.$[elem].updatedAt": new Date(),
+      },
     },
     {
       arrayFilters: [
         {
           "elem.appointmentId": appointmentId,
           "elem.time": appointmentTime,
-          "elem.status": { $in: ["booked", "pending", "unavailable"] }
-        }
-      ]
+          "elem.status": { $in: ["booked", "pending", "unavailable"] },
+        },
+      ],
     }
   );
-  console.log("cancelSlotresult",result)
+  console.log("cancelSlotresult", result);
 }
 
 exports.releaseDoctorSlot = async (req, res) => {
   const appointment = req.body.appointmentDetails;
   const appointmentId = appointment.appointmentId;
-const reason = req.body.reason || 'Slot released due to payment failure';
+  const reason = req.body.reason || "Slot released due to payment failure";
   if (!appointment.doctorId || !appointment.appointmentId) {
-    return res.status(400).json({ status: "fail", message: "doctorId and appointmentId are required" });
+    return res
+      .status(400)
+      .json({
+        status: "fail",
+        message: "doctorId and appointmentId are required",
+      });
   }
   try {
-        await cancelSlot(appointment, req);
+    await cancelSlot(appointment, req);
 
-         /**
+    /**
      * Update the appointment status to 'cancelled'
      * This will mark the appointment as cancelled and store the cancellation reason
      */
     const updateAppointment = await appointmentModel.findOneAndUpdate(
-      { "appointmentId": appointmentId },
+      { appointmentId: appointmentId },
       {
         $set: {
-          appointmentStatus: 'cancelled',
+          appointmentStatus: "cancelled",
           cancellationReason: reason,
-          updatedBy: req.headers ? req.headers.userid : '',
-          updatedAt: new Date()
-        }
+          updatedBy: req.headers ? req.headers.userid : "",
+          updatedAt: new Date(),
+        },
       },
       { new: true }
     );
 
-
     res.json({ status: "success", message: "Slot released successfully" });
   } catch (err) {
-    console.error('Error in releaseDoctorSlot:', err);
+    console.error("Error in releaseDoctorSlot:", err);
     res.status(500).json({ status: "fail", message: err.message });
   }
 };
@@ -557,8 +682,8 @@ const reason = req.body.reason || 'Slot released due to payment failure';
 exports.getAppointmentTypeCounts = async (req, res) => {
   const { doctorId } = req.query;
   const match = {
-    appointmentStatus: { $ne: 'cancelled' },
-    appointmentType: { $in: ['In-Person', 'Video', 'home-visit'] }
+    appointmentStatus: { $ne: "cancelled" },
+    appointmentType: { $in: ["In-Person", "Video", "home-visit"] },
   };
   if (doctorId) {
     match.doctorId = doctorId;
@@ -567,24 +692,24 @@ exports.getAppointmentTypeCounts = async (req, res) => {
     const counts = await appointmentModel.aggregate([
       {
         $match: {
-          appointmentStatus: { $ne: 'cancelled' },
-          appointmentType: { $in: ['In-Person', 'Video', 'home-visit'] }
-        }
+          appointmentStatus: { $ne: "cancelled" },
+          appointmentType: { $in: ["In-Person", "Video", "home-visit"] },
+        },
       },
       {
         $group: {
-          _id: '$appointmentType',
-          count: { $sum: 1 }
-        }
-      }
+          _id: "$appointmentType",
+          count: { $sum: 1 },
+        },
+      },
     ]);
     // Format response as { appointmentType: count }
     const result = {
       "In-Person": 0,
-      "Video": 0,
-      "home-visit": 0
+      Video: 0,
+      "home-visit": 0,
     };
-    counts.forEach(item => {
+    counts.forEach((item) => {
       result[item._id] = item.count;
     });
     res.json({ result });
@@ -608,25 +733,27 @@ exports.getTodayAndUpcomingAppointmentsCount = async (req, res) => {
     const baseQuery = {};
     if (doctorId) baseQuery.userId = doctorId;
 
-
     // console.log('--- Dates ---');
-// console.log({ todayStart, todayEnd, tomorrowStart, doctorId });
+    // console.log({ todayStart, todayEnd, tomorrowStart, doctorId });
     // Date-based counts
     const todayQuery = {
       ...baseQuery,
-      appointmentDate: { $gte: todayStart, $lte: todayEnd }
+      appointmentDate: { $gte: todayStart, $lte: todayEnd },
     };
     const upcomingQuery = {
       ...baseQuery,
-      appointmentDate: { $gte: tomorrowStart }
+      appointmentDate: { $gte: tomorrowStart },
     };
 
     // Status-based counts (all dates)
-    const completedQuery = { ...baseQuery, appointmentStatus: 'completed' };
-    const rescheduledQuery = { ...baseQuery, appointmentStatus: 'rescheduled' };
-    const scheduledQuery = { ...baseQuery, appointmentStatus: 'scheduled' };
-    const cancelledQuery = { ...baseQuery, appointmentStatus: 'cancelled' };
-    const activeQuery = { ...baseQuery, appointmentStatus: { $nin: ['cancelled', 'completed'] } };
+    const completedQuery = { ...baseQuery, appointmentStatus: "completed" };
+    const rescheduledQuery = { ...baseQuery, appointmentStatus: "rescheduled" };
+    const scheduledQuery = { ...baseQuery, appointmentStatus: "scheduled" };
+    const cancelledQuery = { ...baseQuery, appointmentStatus: "cancelled" };
+    const activeQuery = {
+      ...baseQuery,
+      appointmentStatus: { $nin: ["cancelled", "completed"] },
+    };
     const totalQuery = { ...baseQuery };
 
     const [
@@ -637,7 +764,7 @@ exports.getTodayAndUpcomingAppointmentsCount = async (req, res) => {
       scheduled,
       cancelled,
       active,
-      total
+      total,
     ] = await Promise.all([
       appointmentModel.countDocuments(todayQuery),
       appointmentModel.countDocuments(upcomingQuery),
@@ -646,11 +773,11 @@ exports.getTodayAndUpcomingAppointmentsCount = async (req, res) => {
       appointmentModel.countDocuments(scheduledQuery),
       appointmentModel.countDocuments(cancelledQuery),
       appointmentModel.countDocuments(activeQuery),
-      appointmentModel.countDocuments(totalQuery)
+      appointmentModel.countDocuments(totalQuery),
     ]);
 
     res.json({
-      status: 'success',
+      status: "success",
       data: {
         today,
         upcoming,
@@ -659,11 +786,11 @@ exports.getTodayAndUpcomingAppointmentsCount = async (req, res) => {
         scheduled,
         cancelled,
         active,
-        total
-      }
+        total,
+      },
     });
   } catch (err) {
-    res.status(500).json({ status: 'fail', message: err.message });
+    res.status(500).json({ status: "fail", message: err.message });
   }
 };
 
@@ -671,7 +798,9 @@ exports.getUniquePatientsStats = async (req, res) => {
   try {
     const { doctorId } = req.query;
     if (!doctorId) {
-      return res.status(400).json({ status: 'fail', message: 'doctorId is required' });
+      return res
+        .status(400)
+        .json({ status: "fail", message: "doctorId is required" });
     }
     const now = new Date();
     // Today
@@ -688,107 +817,134 @@ exports.getUniquePatientsStats = async (req, res) => {
     weekEnd.setHours(23, 59, 59, 999);
     // This month
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    const monthEnd = new Date(
+      now.getFullYear(),
+      now.getMonth() + 1,
+      0,
+      23,
+      59,
+      59,
+      999
+    );
 
     // Helper for aggregation
     const uniquePatients = async (match) => {
       const result = await appointmentModel.aggregate([
         { $match: match },
-        { $group: { _id: '$userId' } },
-        { $count: 'count' }
+        { $group: { _id: "$userId" } },
+        { $count: "count" },
       ]);
       return result[0]?.count || 0;
     };
-    const baseMatch = { doctorId, appointmentStatus: { $ne: 'cancelled' } };
-    const [
-      total,
-      today,
-      week,
-      month
-    ] = await Promise.all([
+    const baseMatch = { doctorId, appointmentStatus: { $ne: "cancelled" } };
+    const [total, today, week, month] = await Promise.all([
       uniquePatients(baseMatch),
-      uniquePatients({ ...baseMatch, appointmentDate: { $gte: todayStart, $lte: todayEnd } }),
-      uniquePatients({ ...baseMatch, appointmentDate: { $gte: weekStart, $lte: weekEnd } }),
-      uniquePatients({ ...baseMatch, appointmentDate: { $gte: monthStart, $lte: monthEnd } })
+      uniquePatients({
+        ...baseMatch,
+        appointmentDate: { $gte: todayStart, $lte: todayEnd },
+      }),
+      uniquePatients({
+        ...baseMatch,
+        appointmentDate: { $gte: weekStart, $lte: weekEnd },
+      }),
+      uniquePatients({
+        ...baseMatch,
+        appointmentDate: { $gte: monthStart, $lte: monthEnd },
+      }),
     ]);
     res.json({
-      status: 'success',
+      status: "success",
       data: {
         total,
         today,
         week,
-        month
-      }
+        month,
+      },
     });
   } catch (err) {
-    res.status(500).json({ status: 'fail', message: err.message });
+    res.status(500).json({ status: "fail", message: err.message });
   }
 };
 
 exports.getTopDoctorsByAppointmentCount = async (req, res) => {
   try {
     const topDoctors = await appointmentModel.aggregate([
-      { $match: { appointmentStatus: { $ne: 'cancelled' } } },
+      { $match: { appointmentStatus: { $ne: "cancelled" } } },
       {
         $group: {
-          _id: '$doctorId',
+          _id: "$doctorId",
           count: { $sum: 1 },
-          doctorName: { $first: '$doctorName' }
-        }
+          doctorName: { $first: "$doctorName" },
+        },
       },
       { $sort: { count: -1 } },
       { $limit: 5 },
       {
         $project: {
-          doctorId: '$_id',
+          doctorId: "$_id",
           doctorName: 1,
           count: 1,
-          _id: 0
-        }
-      }
+          _id: 0,
+        },
+      },
     ]);
-    res.json({ status: 'success', data: topDoctors });
+    res.json({ status: "success", data: topDoctors });
   } catch (err) {
-    res.status(500).json({ status: 'fail', message: err.message });
+    res.status(500).json({ status: "fail", message: err.message });
   }
 };
-
 
 exports.cancelAppointment = async (req, res) => {
   const { appointmentId, reason } = req.body;
   if (!appointmentId) {
-    return res.status(400).json({ status: 'fail', message: "appointmentId is required" });
+    return res
+      .status(400)
+      .json({ status: "fail", message: "appointmentId is required" });
   }
   if (!reason) {
-    return res.status(400).json({ status: 'fail', message: "Cancellation reason is required" });
+    return res
+      .status(400)
+      .json({ status: "fail", message: "Cancellation reason is required" });
   }
 
   try {
-    const appointment = await appointmentModel.findOne({ "appointmentId": appointmentId });
+    const appointment = await appointmentModel.findOne({
+      appointmentId: appointmentId,
+    });
     if (!appointment) {
-      return res.status(404).json({ status: 'fail', message: "Appointment not found" });
+      return res
+        .status(404)
+        .json({ status: "fail", message: "Appointment not found" });
     }
 
+    const resp = await axios.get(
+      `http://localhost:4002/pharmacy/getEPrescriptionByAppointmentId/${appointmentId}`,
+      {
+        headers: {
+          "Content-Type": "application/json",
+          // Add authorization headers if needed
+          // 'Authorization': `Bearer ${req.headers.authorization}`
+        },
+      }
+    );
+    if (resp?.data?.data?.length > 0) {
+      console.log("Prescription exists, cannot cancel appointment");
+      return res
+        .status(400)
+        .json({
+          status: "fail",
+          message: "Cannot cancel appointment with existing prescription",
+        });
+    }
 
-     const resp = await axios.get(
-          `http://localhost:4002/pharmacy/getEPrescriptionByAppointmentId/${appointmentId}`,
-          {
-            headers: {
-        'Content-Type': 'application/json',
-        // Add authorization headers if needed
-        // 'Authorization': `Bearer ${req.headers.authorization}`
-      },
-          },
-           
-        );
-        if (resp?.data?.data?.length > 0) {
-          console.log('Prescription exists, cannot cancel appointment');
-          return res.status(400).json({ status: 'fail', message: "Cannot cancel appointment with existing prescription" });
-        } 
-       
     // Only cancel if not already cancelled or completed
-    if (['cancelled', 'completed'].includes(appointment.appointmentStatus)) {
-      return res.status(400).json({ status: 'fail', message: `Cannot cancel appointment already marked as ${appointment.appointmentStatus}` });
+    if (["cancelled", "completed"].includes(appointment.appointmentStatus)) {
+      return res
+        .status(400)
+        .json({
+          status: "fail",
+          message: `Cannot cancel appointment already marked as ${appointment.appointmentStatus}`,
+        });
     }
 
     // Can uncomment this block if you want to prevent cancellation of past appointments
@@ -813,13 +969,14 @@ exports.cancelAppointment = async (req, res) => {
      */
     const payment = await updatePayment(req.headers.authorization, {
       appointmentId: appointment.appointmentId,
-      status: 'refund_pending'
+      status: "refund_pending",
     });
 
-    if (!payment || payment.status !== 'success') {
+    if (!payment || payment.status !== "success") {
       return res.status(500).json({
-        status: 'fail',
-        message: 'Failed to update payment status to refund_pending. Please try again later.'
+        status: "fail",
+        message:
+          "Failed to update payment status to refund_pending. Please try again later.",
       });
     }
     /**
@@ -834,77 +991,96 @@ exports.cancelAppointment = async (req, res) => {
      * This will mark the appointment as cancelled and store the cancellation reason
      */
     const updateAppointment = await appointmentModel.findOneAndUpdate(
-      { "appointmentId": appointmentId },
+      { appointmentId: appointmentId },
       {
         $set: {
-          appointmentStatus: 'cancelled',
+          appointmentStatus: "cancelled",
           cancellationReason: reason,
-          updatedBy: req.headers ? req.headers.userid : '',
-          updatedAt: new Date()
-        }
+          updatedBy: req.headers ? req.headers.userid : "",
+          updatedAt: new Date(),
+        },
       },
       { new: true }
     );
     if (!updateAppointment) {
-      return res.status(404).json({ status: 'fail', message: "Failed to cancel appointment" });
+      return res
+        .status(404)
+        .json({ status: "fail", message: "Failed to cancel appointment" });
     }
     return res.status(200).json({
-      status: 'success',
-      message: 'Appointment cancelled successfully'
+      status: "success",
+      message: "Appointment cancelled successfully",
       // appointmentDetails: appointment,
       // paymentDetails: payment.data || null
     });
-
   } catch (err) {
     console.error("Cancel Appointment Error:", err);
-    return res.status(500).json({ status: 'fail', message: 'Internal server error' });
+    return res
+      .status(500)
+      .json({ status: "fail", message: "Internal server error" });
   }
 };
 
 exports.rescheduleAppointment = async (req, res) => {
   const { appointmentId, newDate, newTime, reason } = req.body;
   if (!appointmentId || !newDate || !newTime) {
-    return res.status(400).json({ status: 'fail', message: "appointmentId, newDate and newTime are required" });
+    return res
+      .status(400)
+      .json({
+        status: "fail",
+        message: "appointmentId, newDate and newTime are required",
+      });
   }
   const rescheduleDateTime = moment.tz(
-    `${moment(newDate).format('YYYY-MM-DD')} ${newTime}`,
-    'YYYY-MM-DD HH:mm',
-    'Asia/Kolkata'
+    `${moment(newDate).format("YYYY-MM-DD")} ${newTime}`,
+    "YYYY-MM-DD HH:mm",
+    "Asia/Kolkata"
   );
-  if (rescheduleDateTime.isSameOrBefore(moment.tz('Asia/Kolkata'))) {
+  if (rescheduleDateTime.isSameOrBefore(moment.tz("Asia/Kolkata"))) {
     return res.status(400).json({
-      status: 'fail',
-      message: 'Cannot reschedule past date and time'
+      status: "fail",
+      message: "Cannot reschedule past date and time",
     });
   }
 
   try {
-    const appointment = await appointmentModel.findOne({ "appointmentId": appointmentId });
+    const appointment = await appointmentModel.findOne({
+      appointmentId: appointmentId,
+    });
     if (!appointment) {
-      return res.status(404).json({ status: 'fail', message: "Appointment not found" });
+      return res
+        .status(404)
+        .json({ status: "fail", message: "Appointment not found" });
     }
 
-    
-     const resp = await axios.get(
-          `http://localhost:4002/pharmacy/getEPrescriptionByAppointmentId/${appointmentId}`,
-          {
-            headers: {
-        'Content-Type': 'application/json',
-        // Add authorization headers if needed
-        // 'Authorization': `Bearer ${req.headers.authorization}`
-      },
-          },
-           
-        );
-        if (resp?.data?.data?.length > 0) {
-       console.log('Prescription exists, cannot reschedule appointment');
-       return res.status(400).json({ status: 'fail', message: "Cannot reschedule appointment with existing prescription" });
-        } 
-       
+    const resp = await axios.get(
+      `http://localhost:4002/pharmacy/getEPrescriptionByAppointmentId/${appointmentId}`,
+      {
+        headers: {
+          "Content-Type": "application/json",
+          // Add authorization headers if needed
+          // 'Authorization': `Bearer ${req.headers.authorization}`
+        },
+      }
+    );
+    if (resp?.data?.data?.length > 0) {
+      console.log("Prescription exists, cannot reschedule appointment");
+      return res
+        .status(400)
+        .json({
+          status: "fail",
+          message: "Cannot reschedule appointment with existing prescription",
+        });
+    }
 
     // Only reschedule if not already cancelled or completed
-    if (['cancelled', 'completed'].includes(appointment.appointmentStatus)) {
-      return res.status(400).json({ status: 'fail', message: `Cannot reschedule appointment already marked as ${appointment.appointmentStatus}` });
+    if (["cancelled", "completed"].includes(appointment.appointmentStatus)) {
+      return res
+        .status(400)
+        .json({
+          status: "fail",
+          message: `Cannot reschedule appointment already marked as ${appointment.appointmentStatus}`,
+        });
     }
 
     // Can uncomment this block if you want to prevent rescheduling of past appointments
@@ -927,26 +1103,30 @@ exports.rescheduleAppointment = async (req, res) => {
      * If there are no existing appointments, we will proceed to cancel the current appointment and book the new slot
      */
     const checkSlotAvailable = await appointmentModel.find({
-      "doctorId": appointment.doctorId,
-      "appointmentDate": new Date(newDate),
-      "appointmentTime": newTime,
-      "appointmentStatus": { $in: ["pending", "scheduled"] }
+      doctorId: appointment.doctorId,
+      appointmentDate: new Date(newDate),
+      appointmentTime: newTime,
+      appointmentStatus: { $in: ["pending", "scheduled"] },
     });
 
-    const checkSlotAvailability = await findSlotByDateTime(appointment.doctorId, newDate, newTime);
+    const checkSlotAvailability = await findSlotByDateTime(
+      appointment.doctorId,
+      newDate,
+      newTime
+    );
 
     if (checkSlotAvailable.length > 0 || checkSlotAvailability.length > 0) {
       return res.status(208).json({
-        status: 'fail',
-        message: 'Slot already booked for this date and time',
+        status: "fail",
+        message: "Slot already booked for this date and time",
       });
     }
-    /** 
+    /**
      * Cancel the current appointment slot
      * This will set the slot status to 'available' and clear the appointmentId
      */
     await cancelSlot(appointment, req);
-    /** 
+    /**
      * Book the new slot
      * This will set the slot status to 'booked' and set the appointmentId
      */
@@ -957,14 +1137,15 @@ exports.rescheduleAppointment = async (req, res) => {
         doctorId: appointment.doctorId,
         addressId: appointment.addressId,
         appointmentDate: new Date(newDate),
-        appointmentTime: newTime
+        appointmentTime: newTime,
       },
-      headers: req.headers
+      headers: req.headers,
     });
     if (!bookingResult || bookingResult.modifiedCount === 0) {
       return res.status(404).json({
-        status: 'fail',
-        message: 'Slot already booked or slots do not exist check in slot availability.'
+        status: "fail",
+        message:
+          "Slot already booked or slots do not exist check in slot availability.",
       });
     }
     /**
@@ -972,14 +1153,14 @@ exports.rescheduleAppointment = async (req, res) => {
      * This will update the appointment date, time and status to 'scheduled'
      */
     const updateAppointment = await appointmentModel.findOneAndUpdate(
-      { "appointmentId": appointmentId },
+      { appointmentId: appointmentId },
       {
         $set: {
           appointmentDate: new Date(newDate),
           appointmentTime: newTime,
           appointmentStatus: "scheduled",
-          updatedBy: req.headers ? req.headers.userid : '',
-          updatedAt: new Date()
+          updatedBy: req.headers ? req.headers.userid : "",
+          updatedAt: new Date(),
         },
         $push: {
           rescheduleHistory: {
@@ -988,89 +1169,224 @@ exports.rescheduleAppointment = async (req, res) => {
             rescheduledDate: new Date(newDate),
             rescheduledTime: newTime,
             reason: reason || null,
-          }
-        }
+          },
+        },
       },
       { new: true }
     );
     if (!updateAppointment) {
-      return res.status(404).json({ status: 'fail', message: "Failed to reschedule appointment" });
+      return res
+        .status(404)
+        .json({ status: "fail", message: "Failed to reschedule appointment" });
     }
 
     return res.status(200).json({
-      status: 'success',
-      message: 'Appointment rescheduled successfully',
-      appointmentDetails: updateAppointment
+      status: "success",
+      message: "Appointment rescheduled successfully",
+      appointmentDetails: updateAppointment,
     });
-  }
-  catch (err) {
+  } catch (err) {
     console.error("Reschedule Appointment Error:", err);
-    return res.status(500).json({ status: 'fail', message: 'Internal server error' });
+    return res
+      .status(500)
+      .json({ status: "fail", message: "Internal server error" });
+  }
+};
+
+async function creditReferralReward(appointment, rewardAmount) {
+  try {
+    // Step 1: Fetch referral details from users service
+    const referralResp = await axios.get(
+      `http://localhost:4001/auth/referral/${appointment.referralCode}/${appointment.appointmentId}`,
+       {
+        headers: {
+          'Content-Type': 'application/json',
+          // Authorization: req.headers.authorization || ''
+        },
+      }
+    );
+
+    const referral = referralResp.data?.data;
+    if (!referral) {
+      throw {
+      statusCode: 404,
+      message: `Referral not found for code: ${appointment.referralCode} and appointment ID: ${appointment.appointmentId}`,
+    };
+    }
+
+    // Step 2: Validate referral
+    if (
+    referral.appointmentId !== appointment.appointmentId ||
+      referral.status !== 'completed' ||
+      referral.rewardIssued
+    ) {
+      throw {
+      statusCode: 400,
+      message: `Referral ineligible for reward: code=${appointment.referralCode}, userId=${appointment.userId}, appointmentId=${appointment.appointmentId}, status=${referral.status}, rewardIssued=${referral.rewardIssued}`,
+    };
+    }
+
+    // Step 3: Create wallet transaction in payments service
+    const transactionResponse = await axios.post(
+      'http://localhost:4003/wallet/createWalletTransaction',
+      {
+        customerID: referral.referredBy,
+        transactionID: `REF_REWARD_${referral.referralCode}_${Date.now()}`,
+        amount: rewardAmount,
+        transactionType: 'credit',
+        purpose: 'referral_reward',
+        description: `Reward for referral code ${referral.referralCode} on appointment ${appointment.appointmentId}`,
+        currency: 'INR',
+        status: 'approved',
+        createdAt: Date.now(),
+        createdBy: 'system',
+        updatedAt: Date.now(),
+        updatedBy: 'system',
+        statusHistory: [
+          {
+            note: `Reward credited for referral ${referral.referralCode}`,
+            status: 'approved',
+            updatedAt: Date.now(),
+            updatedBy: 'system',
+          },
+        ],
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          // Authorization: req.headers?.authorization || '',
+        },
+      }
+    );
+console.log("transactionResponse",transactionResponse.data)
+    if (transactionResponse.data?.status !== 'success') {
+      throw {
+      statusCode: 500,
+      message: `Failed to create wallet transaction: ${transactionResponse.data?.message || 'Unknown error'}`,
+    };
+    }
+
+    // Step 4: Update referral status to rewarded in users service
+    const referralUpdateResp = await axios.patch(
+      `http://localhost:4001/auth/referral/${appointment.referralCode}/${appointment.appointmentId}`,
+      { status: 'rewarded', rewardIssued: true },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          // Authorization: req.headers?.authorization || '',
+        },
+      }
+    );
+
+    if (referralUpdateResp.data?.status !== 'success') {
+      throw {
+      statusCode: 500,
+      message: `Failed to update referral status: ${referralUpdateResp.data?.message || 'Unknown error'}`,
+    };
+    }
+
+    console.log(
+      `Reward of ${rewardAmount} INR credited to user ${referral.referredBy} wallet for referral ${referral.referralCode}`
+    );
+    return true;
+  } catch (error) {
+    console.error('Error in creditReferralReward:', error.message);
+    return false;
   }
 }
 
 exports.completeAppointment = async (req, res) => {
-  const { appointmentId, appointmentNotes = '' } = req.body;
+  const { appointmentId, appointmentNotes = "" } = req.body;
   if (!appointmentId) {
-    return res.status(400).json({ status: 'fail', message: "appointmentId is required" });
+    return res
+      .status(400)
+      .json({ status: "fail", message: "appointmentId is required" });
   }
 
   try {
-    const appointment = await appointmentModel.findOne({ "appointmentId": appointmentId });
+    const appointment = await appointmentModel.findOne({
+      appointmentId: appointmentId,
+    });
     if (!appointment) {
-      return res.status(404).json({ status: 'fail', message: "Appointment not found" });
+      return res
+        .status(404)
+        .json({ status: "fail", message: "Appointment not found" });
     }
 
     // Only complete if not already cancelled or completed
-    if (['cancelled', 'completed'].includes(appointment.appointmentStatus)) {
-      return res.status(400).json({ status: 'fail', message: `Cannot complete appointment already marked as ${appointment.appointmentStatus}` });
+    if (["cancelled", "completed"].includes(appointment.appointmentStatus)) {
+      return res
+        .status(400)
+        .json({
+          status: "fail",
+          message: `Cannot complete appointment already marked as ${appointment.appointmentStatus}`,
+        });
     }
 
     const updateAppointment = await appointmentModel.findOneAndUpdate(
-      { "appointmentId": appointmentId },
+      { appointmentId: appointmentId },
       {
         $set: {
-          appointmentStatus: 'completed',
+          appointmentStatus: "completed",
           appointmentNotes: appointmentNotes,
-          updatedBy: req.headers ? req.headers.userid : '',
-          updatedAt: new Date()
-        }
+          updatedBy: req.headers ? req.headers.userid : "",
+          updatedAt: new Date(),
+        },
       },
       { new: true }
     );
     if (!updateAppointment) {
-      return res.status(404).json({ status: 'fail', message: "Failed to complete appointment" });
+      return res
+        .status(404)
+        .json({ status: "fail", message: "Failed to complete appointment" });
     }
 
-    return res.status(200).json({
-      status: 'success',
-      message: 'Appointment completed successfully',
-      appointmentDetails: updateAppointment
-    });
+    // Credit referral reward if referralCode exists
+    if (updateAppointment.referralCode) {
+      const REWARD_AMOUNT = 100; // Define your reward amount here (e.g., 100 INR)
+    try {
+        await creditReferralReward(updateAppointment, REWARD_AMOUNT);
+      } catch (error) {
+        // Return the error from creditReferralReward, but allow appointment completion
+        return res.status(error.statusCode || 500).json({
+          status: 'fail',
+          message: `Appointment completed, but failed to credit referral reward: ${error.message}`,
+        });
+      }
+    }
 
+
+    return res.status(200).json({
+      status: "success",
+      message: "Appointment completed successfully",
+      appointmentDetails: updateAppointment,
+    });
   } catch (err) {
     console.error("Complete Appointment Error:", err);
-    return res.status(500).json({ status: 'fail', message: 'Internal server error' });
+    return res
+      .status(500)
+      .json({ status: "fail", message: "Internal server error" });
   }
-}
+};
 
 exports.updateAppointmentById = async (req, res) => {
   const { appointmentId, ...updateData } = req.body;
 
   if (!appointmentId) {
-    return res.status(400).json({ status: 'fail', message: "appointmentId is required" });
+    return res
+      .status(400)
+      .json({ status: "fail", message: "appointmentId is required" });
   }
 
   // Allowed fields for normal updates
-  const allowedFields = [
-    "appointmentReason",
-    "appointmentNotes"
-  ];
+  const allowedFields = ["appointmentReason", "appointmentNotes"];
 
   try {
     const appointment = await appointmentModel.findOne({ appointmentId });
     if (!appointment) {
-      return res.status(404).json({ status: 'fail', message: "Appointment not found" });
+      return res
+        .status(404)
+        .json({ status: "fail", message: "Appointment not found" });
     }
 
     let filteredUpdateData = {};
@@ -1084,11 +1400,15 @@ exports.updateAppointmentById = async (req, res) => {
     }
 
     // If trying to update other fields → block
-    const extraKeys = Object.keys(updateData).filter(k => !allowedIfFinal.includes(k));
+    const extraKeys = Object.keys(updateData).filter(
+      (k) => !allowedIfFinal.includes(k)
+    );
     if (extraKeys.length > 0) {
       return res.status(400).json({
-        status: 'fail',
-        message: `Cannot update fields ${extraKeys.join(', ')} for a ${appointment.appointmentStatus} appointment`
+        status: "fail",
+        message: `Cannot update fields ${extraKeys.join(", ")} for a ${
+          appointment.appointmentStatus
+        } appointment`,
       });
     }
 
@@ -1097,28 +1417,33 @@ exports.updateAppointmentById = async (req, res) => {
       {
         $set: {
           ...filteredUpdateData,
-          updatedBy: req.headers?.userid || '',
-          updatedAt: new Date()
-        }
+          updatedBy: req.headers?.userid || "",
+          updatedAt: new Date(),
+        },
       },
       { new: true }
     );
 
     if (!updatedAppointment) {
-      return res.status(404).json({ status: 'fail', message: "Failed to update appointment" });
+      return res
+        .status(404)
+        .json({ status: "fail", message: "Failed to update appointment" });
     }
 
     return res.status(200).json({
-      status: 'success',
-      message: 'Appointment updated successfully',
-      appointmentDetails: updatedAppointment
+      status: "success",
+      message: "Appointment updated successfully",
+      appointmentDetails: updatedAppointment,
     });
-
   } catch (err) {
-    return res.status(500).json({ status: 'fail', message: `Internal server error: ${err.message}` });
+    return res
+      .status(500)
+      .json({
+        status: "fail",
+        message: `Internal server error: ${err.message}`,
+      });
   }
 };
-
 
 exports.getTodayAppointmentCount = async (req, res) => {
   const doctorId = req.query.doctorId || req.headers.userid;
@@ -1136,8 +1461,8 @@ exports.getTodayAppointmentCount = async (req, res) => {
       doctorId,
       appointmentDate: {
         $gte: today,
-        $lt: tomorrow
-      }
+        $lt: tomorrow,
+      },
     });
 
     // Yesterday's stats
@@ -1145,36 +1470,40 @@ exports.getTodayAppointmentCount = async (req, res) => {
       doctorId,
       appointmentDate: {
         $gte: yesterday,
-        $lt: today
-      }
+        $lt: today,
+      },
     });
 
     // 1. Today's total appointments count (new + followup)
     const totalAppointmentsToday = todaysAppointments.length;
 
     // 2. New appointments count (New-Walkin or New-Homecare)
-    const newAppointmentsToday = todaysAppointments.filter(app =>
-      app.appointmentType.toLowerCase() === 'new-walkin' ||
-      app.appointmentType.toLowerCase() === 'new-homecare'
+    const newAppointmentsToday = todaysAppointments.filter(
+      (app) =>
+        app.appointmentType.toLowerCase() === "new-walkin" ||
+        app.appointmentType.toLowerCase() === "new-homecare"
     ).length;
 
     // 3. Follow-up appointments count (Followup-Walkin, Followup-Video, Followup-Homecare)
-    const followupAppointmentsToday = todaysAppointments.filter(app =>
-      app.appointmentType.toLowerCase() === 'followup-walkin' ||
-      app.appointmentType.toLowerCase() === 'followup-video' ||
-      app.appointmentType.toLowerCase() === 'followup-homecare'
+    const followupAppointmentsToday = todaysAppointments.filter(
+      (app) =>
+        app.appointmentType.toLowerCase() === "followup-walkin" ||
+        app.appointmentType.toLowerCase() === "followup-video" ||
+        app.appointmentType.toLowerCase() === "followup-homecare"
     ).length;
 
     // Yesterday's counts for percentage calculation
     const totalAppointmentsYesterday = yesterdaysAppointments.length;
-    const newAppointmentsYesterday = yesterdaysAppointments.filter(app =>
-      app.appointmentType.toLowerCase() === 'new-walkin' ||
-      app.appointmentType.toLowerCase() === 'new-homecare'
+    const newAppointmentsYesterday = yesterdaysAppointments.filter(
+      (app) =>
+        app.appointmentType.toLowerCase() === "new-walkin" ||
+        app.appointmentType.toLowerCase() === "new-homecare"
     ).length;
-    const followupAppointmentsYesterday = yesterdaysAppointments.filter(app =>
-      app.appointmentType.toLowerCase() === 'followup-walkin' ||
-      app.appointmentType.toLowerCase() === 'followup-video' ||
-      app.appointmentType.toLowerCase() === 'followup-homecare'
+    const followupAppointmentsYesterday = yesterdaysAppointments.filter(
+      (app) =>
+        app.appointmentType.toLowerCase() === "followup-walkin" ||
+        app.appointmentType.toLowerCase() === "followup-video" ||
+        app.appointmentType.toLowerCase() === "followup-homecare"
     ).length;
 
     // Calculate percentage change
@@ -1182,18 +1511,29 @@ exports.getTodayAppointmentCount = async (req, res) => {
       if (yesterdayCount === 0) {
         return todayCount > 0 ? 100 : 0;
       }
-      return ((todayCount - yesterdayCount) / yesterdayCount * 100).toFixed(2);
+      return (((todayCount - yesterdayCount) / yesterdayCount) * 100).toFixed(
+        2
+      );
     };
 
-    const totalPercentageChange = calculatePercentageChange(totalAppointmentsToday, totalAppointmentsYesterday);
-    const newPercentageChange = calculatePercentageChange(newAppointmentsToday, newAppointmentsYesterday);
-    const followupPercentageChange = calculatePercentageChange(followupAppointmentsToday, followupAppointmentsYesterday);
+    const totalPercentageChange = calculatePercentageChange(
+      totalAppointmentsToday,
+      totalAppointmentsYesterday
+    );
+    const newPercentageChange = calculatePercentageChange(
+      newAppointmentsToday,
+      newAppointmentsYesterday
+    );
+    const followupPercentageChange = calculatePercentageChange(
+      followupAppointmentsToday,
+      followupAppointmentsYesterday
+    );
 
     // Format date in IST (YYYY-MM-DD)
     const formatDate = (date) => {
       const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, '0'); // Months are 0-based
-      const day = String(date.getDate()).padStart(2, '0');
+      const month = String(date.getMonth() + 1).padStart(2, "0"); // Months are 0-based
+      const day = String(date.getDate()).padStart(2, "0");
       return `${year}-${month}-${day}`;
     };
 
@@ -1203,26 +1543,29 @@ exports.getTodayAppointmentCount = async (req, res) => {
       date: formatDate(today), // Use local date formatting
       totalAppointments: {
         today: totalAppointmentsToday,
-        percentageChange: parseFloat(totalPercentageChange)
+        percentageChange: parseFloat(totalPercentageChange),
       },
       newAppointments: {
         today: newAppointmentsToday,
-        percentageChange: parseFloat(newPercentageChange)
+        percentageChange: parseFloat(newPercentageChange),
       },
       followupAppointments: {
         today: followupAppointmentsToday,
-        percentageChange: parseFloat(followupPercentageChange)
-      }
+        percentageChange: parseFloat(followupPercentageChange),
+      },
     };
 
     // console.log(JSON.stringify(result, null, 2));
-    return res.status(200).json({ status: 'success', data: result });
-
+    return res.status(200).json({ status: "success", data: result });
   } catch (err) {
-    return res.status(500).json({ status: 'fail', message: `Internal server error: ${err.message}` });
+    return res
+      .status(500)
+      .json({
+        status: "fail",
+        message: `Internal server error: ${err.message}`,
+      });
   }
 };
-
 
 exports.getAppointmentsByDoctorID2 = async (req, res) => {
   try {
@@ -1234,42 +1577,51 @@ exports.getAppointmentsByDoctorID2 = async (req, res) => {
     if (!doctorId) {
       return res.status(400).json({
         status: "fail",
-        message: "Doctor ID is required in headers"
+        message: "Doctor ID is required in headers",
       });
     }
 
     // Build query
     const query = { doctorId, isDeleted: { $ne: true } };
-    if (type === 'appointment') {
-      query.appointmentStatus = { $in: ['scheduled', 'rescheduled', 'cancelled'] };
-    }
-    else if (type === 'dashboardAppointment') {
-      query.appointmentStatus = { $in: ['scheduled', 'rescheduled', 'cancelled', 'completed'] };
-    }
-    else {
-      query.appointmentStatus = 'completed';
+    if (type === "appointment") {
+      query.appointmentStatus = {
+        $in: ["scheduled", "rescheduled", "cancelled"],
+      };
+    } else if (type === "dashboardAppointment") {
+      query.appointmentStatus = {
+        $in: ["scheduled", "rescheduled", "cancelled", "completed"],
+      };
+    } else {
+      query.appointmentStatus = "completed";
     }
 
     if (date) {
-      const startOfDay = moment.tz(date, 'YYYY-MM-DD', 'Asia/Kolkata').startOf('day').toDate();
-      const endOfDay = moment.tz(date, 'YYYY-MM-DD', 'Asia/Kolkata').endOf('day').toDate();
+      const startOfDay = moment
+        .tz(date, "YYYY-MM-DD", "Asia/Kolkata")
+        .startOf("day")
+        .toDate();
+      const endOfDay = moment
+        .tz(date, "YYYY-MM-DD", "Asia/Kolkata")
+        .endOf("day")
+        .toDate();
       query.appointmentDate = { $gte: startOfDay, $lte: endOfDay };
     }
 
     // Find appointments
-    const appointments = await appointmentModel.find(query).sort({ appointmentDate: -1 });
+    const appointments = await appointmentModel
+      .find(query)
+      .sort({ appointmentDate: -1 });
 
     return res.status(200).json({
       status: "success",
       message: "Appointments retrieved successfully",
-      data: appointments
+      data: appointments,
     });
-
   } catch (error) {
     console.error("Error in getAppointmentsByDoctorID:", error);
     return res.status(500).json({
       status: "fail",
-      message: error.message || "Internal server error"
+      message: error.message || "Internal server error",
     });
   }
 };
@@ -1279,89 +1631,111 @@ exports.getAppointmentsByDoctorID = async (req, res) => {
     const doctorId = req.query.doctorId || req.headers.userid;
     const { type } = req.params;
     // const { date } = req.query;
-    const { date, searchText, clinic, appointmentType, status, page = 1, limit = 5 } = req.query;
+    const {
+      date,
+      searchText,
+      clinic,
+      appointmentType,
+      status,
+      page = 1,
+      limit = 5,
+    } = req.query;
 
     // Validate doctorId
     if (!doctorId) {
       return res.status(400).json({
         status: "fail",
-        message: "Doctor ID is required in headers"
+        message: "Doctor ID is required in headers",
       });
     }
 
-     // Validate pagination parameters
+    // Validate pagination parameters
     const pageNum = parseInt(page, 10);
     const limitNum = parseInt(limit, 10);
     if (isNaN(pageNum) || pageNum < 1 || isNaN(limitNum) || limitNum < 1) {
       return res.status(400).json({
         status: "fail",
-        message: "Invalid page or limit parameters"
+        message: "Invalid page or limit parameters",
       });
     }
 
     // Build query
     const query = { doctorId, isDeleted: { $ne: true } };
-    if (type === 'appointment') {
-      query.appointmentStatus = { $in: ['scheduled', 'rescheduled', 'cancelled'] };
-    } else if (type === 'dashboardAppointment') {
-      query.appointmentStatus = { $in: ['scheduled', 'rescheduled', 'cancelled', 'completed'] };
+    if (type === "appointment") {
+      query.appointmentStatus = {
+        $in: ["scheduled", "rescheduled", "cancelled"],
+      };
+    } else if (type === "dashboardAppointment") {
+      query.appointmentStatus = {
+        $in: ["scheduled", "rescheduled", "cancelled", "completed"],
+      };
     } else {
-      query.appointmentStatus = 'completed';
+      query.appointmentStatus = "completed";
     }
 
     if (date) {
-      const startOfDay = moment.tz(date, 'YYYY-MM-DD', 'Asia/Kolkata').startOf('day').toDate();
-      const endOfDay = moment.tz(date, 'YYYY-MM-DD', 'Asia/Kolkata').endOf('day').toDate();
+      const startOfDay = moment
+        .tz(date, "YYYY-MM-DD", "Asia/Kolkata")
+        .startOf("day")
+        .toDate();
+      const endOfDay = moment
+        .tz(date, "YYYY-MM-DD", "Asia/Kolkata")
+        .endOf("day")
+        .toDate();
       query.appointmentDate = { $gte: startOfDay, $lte: endOfDay };
     }
 
     // Clinic (appointmentDepartment) filter
-    if (clinic && clinic !== 'all') {
+    if (clinic && clinic !== "all") {
       query.appointmentDepartment = clinic;
     }
 
     // Appointment type filter
-    if (appointmentType && appointmentType !== 'all') {
+    if (appointmentType && appointmentType !== "all") {
       query.appointmentType = appointmentType;
     }
 
     // Status filter
-    if (status && status !== 'all') {
+    if (status && status !== "all") {
       query.appointmentStatus = status;
     }
-
 
     // Search text filter (patientName, appointmentId, email, mobile)
     if (searchText) {
       const userIds = [];
       // Fetch users matching searchText for name, email, or mobile
       try {
-        const userServiceUrl = process.env.USER_SERVICE_URL || 'http://localhost:4002';
-        const userResponse = await axios.post(`${userServiceUrl}/users/searchUsers`, {
-          searchText
-        }, {
-          headers: {
-            'Content-Type': 'application/json',
-            // Add authorization headers if needed
-            // 'Authorization': `Bearer ${req.headers.authorization}`
+        const userServiceUrl =
+          process.env.USER_SERVICE_URL || "http://localhost:4002";
+        const userResponse = await axios.post(
+          `${userServiceUrl}/users/searchUsers`,
+          {
+            searchText,
+          },
+          {
+            headers: {
+              "Content-Type": "application/json",
+              // Add authorization headers if needed
+              // 'Authorization': `Bearer ${req.headers.authorization}`
+            },
           }
-        });
-        if (userResponse.data.status === 'success') {
-          userIds.push(...userResponse.data.data.map(user => user.userId));
+        );
+        if (userResponse.data.status === "success") {
+          userIds.push(...userResponse.data.data.map((user) => user.userId));
         }
       } catch (error) {
-        console.error('Error searching users:', error.message);
+        console.error("Error searching users:", error.message);
       }
 
       // Build search query
       query.$or = [
-        { patientName: { $regex: searchText, $options: 'i' } },
-        { appointmentId: { $regex: searchText, $options: 'i' } },
-         { appointmentId: searchText },
-        { userId: { $regex: searchText, $options: 'i' } },
+        { patientName: { $regex: searchText, $options: "i" } },
+        { appointmentId: { $regex: searchText, $options: "i" } },
+        { appointmentId: searchText },
+        { userId: { $regex: searchText, $options: "i" } },
 
-  { userId: searchText },
-        { userId: { $in: userIds } } // Matches users from search
+        { userId: searchText },
+        { userId: { $in: userIds } }, // Matches users from search
       ];
     }
 
@@ -1371,84 +1745,116 @@ exports.getAppointmentsByDoctorID = async (req, res) => {
     const totalPages = Math.ceil(totalAppointments / limitNum);
 
     // Find appointments
-    const appointments = await appointmentModel.find(query).sort({ createdAt: -1, appointmentDate: -1 }) .skip(skip)
+    const appointments = await appointmentModel
+      .find(query)
+      .sort({ createdAt: -1, appointmentDate: -1 })
+      .skip(skip)
       .limit(limitNum);
 
     // Extract userIds from appointments
-    const userIds = [...new Set(appointments.map(app => app.userId))]; // Unique userIds
+    const userIds = [...new Set(appointments.map((app) => app.userId))]; // Unique userIds
 
     // Fetch user details from User service
     let users = [];
     if (userIds.length > 0) {
       try {
-        const userServiceUrl = process.env.USER_SERVICE_URL || 'http://localhost:4002';
-        const response = await axios.post(`${userServiceUrl}/users/getUsersDetailsByIds`, { userIds }, {
-          headers: {
-            'Content-Type': 'application/json',
-            // Add authorization headers if needed
-            // 'Authorization': `Bearer ${req.headers.authorization}`
+        const userServiceUrl =
+          process.env.USER_SERVICE_URL || "http://localhost:4002";
+        const response = await axios.post(
+          `${userServiceUrl}/users/getUsersDetailsByIds`,
+          { userIds },
+          {
+            headers: {
+              "Content-Type": "application/json",
+              // Add authorization headers if needed
+              // 'Authorization': `Bearer ${req.headers.authorization}`
+            },
           }
-        });
-        if (response.data.status === 'success') {
+        );
+        if (response.data.status === "success") {
           users = response.data.data;
         } else {
-          console.error('Failed to fetch user details:', response.data.message);
+          console.error("Failed to fetch user details:", response.data.message);
         }
       } catch (error) {
-        console.error('Error fetching user details from User service:', error.message);
+        console.error(
+          "Error fetching user details from User service:",
+          error.message
+        );
       }
     }
 
-     // Fetch e-prescriptions for completed appointments
+    // Fetch e-prescriptions for completed appointments
     let prescriptions = [];
-    if (query.appointmentStatus === 'completed' || query.appointmentStatus.$in?.includes('completed')) {
+    if (
+      query.appointmentStatus === "completed" ||
+      query.appointmentStatus.$in?.includes("completed")
+    ) {
       const appointmentIds = appointments
-        .filter(app => app.appointmentStatus === 'completed')
-        .map(app => app.appointmentId);
-      
+        .filter((app) => app.appointmentStatus === "completed")
+        .map((app) => app.appointmentId);
+
       if (appointmentIds.length > 0) {
         try {
-          const userServiceUrl = process.env.USER_SERVICE_URL || 'http://localhost:4002';
-          const response = await axios.post(`${userServiceUrl}/pharmacy/getPrescriptionsByAppointmentIds`, { appointmentIds }, {
-            headers: {
-              'Content-Type': 'application/json',
-              // Add authorization headers if needed
-              // 'Authorization': `Bearer ${req.headers.authorization}`
+          const userServiceUrl =
+            process.env.USER_SERVICE_URL || "http://localhost:4002";
+          const response = await axios.post(
+            `${userServiceUrl}/pharmacy/getPrescriptionsByAppointmentIds`,
+            { appointmentIds },
+            {
+              headers: {
+                "Content-Type": "application/json",
+                // Add authorization headers if needed
+                // 'Authorization': `Bearer ${req.headers.authorization}`
+              },
             }
-          });
-          if (response.data.status === 'success') {
+          );
+          if (response.data.status === "success") {
             prescriptions = response.data.data;
           } else {
-            console.error('Failed to fetch ePrescription details:', response.data.message);
+            console.error(
+              "Failed to fetch ePrescription details:",
+              response.data.message
+            );
           }
         } catch (error) {
-          console.error('Error fetching ePrescription details from User service:', error.message);
+          console.error(
+            "Error fetching ePrescription details from User service:",
+            error.message
+          );
         }
       }
     }
 
     // Map appointments with user details
-    const enrichedAppointments = appointments.map(appointment => {
-      const user = users.find(u => u.userId === appointment.userId) || {};
-       const prescription = prescriptions.find(p => p.appointmentId === appointment.appointmentId) || null;
+    const enrichedAppointments = appointments.map((appointment) => {
+      const user = users.find((u) => u.userId === appointment.userId) || {};
+      const prescription =
+        prescriptions.find(
+          (p) => p.appointmentId === appointment.appointmentId
+        ) || null;
       return {
         ...appointment._doc, // Spread appointment document
         patientDetails: {
-          patientName: appointment.patientName || `${user.firstname || ''} ${user.lastname || ''}`.trim(),
+          patientName:
+            appointment.patientName ||
+            `${user.firstname || ""} ${user.lastname || ""}`.trim(),
           dob: user.DOB || null,
           mobile: user.mobile || null,
           gender: user.gender || null,
-          age: user.age || null
+          age: user.age || null,
         },
-         ePrescription: prescription ? {
-          prescriptionId: prescription.prescriptionId,
-          patientInfo: prescription.patientInfo,
-          vitals: prescription.vitals,
-          diagnosis: prescription.diagnosis,
-          advice: prescription.advice,
-          createdAt: prescription.createdAt,
-          updatedAt: prescription.updatedAt
-        } : null
+        ePrescription: prescription
+          ? {
+              prescriptionId: prescription.prescriptionId,
+              patientInfo: prescription.patientInfo,
+              vitals: prescription.vitals,
+              diagnosis: prescription.diagnosis,
+              advice: prescription.advice,
+              createdAt: prescription.createdAt,
+              updatedAt: prescription.updatedAt,
+            }
+          : null,
       };
     });
 
@@ -1461,16 +1867,15 @@ exports.getAppointmentsByDoctorID = async (req, res) => {
           currentPage: pageNum,
           pageSize: limitNum,
           totalItems: totalAppointments,
-          totalPages
-        }
-      }
+          totalPages,
+        },
+      },
     });
-
   } catch (error) {
     console.error("Error in getAppointmentsByDoctorID:", error);
     return res.status(500).json({
       status: "fail",
-      message: error.message || "Internal server error"
+      message: error.message || "Internal server error",
     });
   }
 };
@@ -1478,13 +1883,13 @@ exports.getAppointmentsByDoctorID = async (req, res) => {
 exports.getAppointmentsCountByDoctorID = async (req, res) => {
   try {
     const doctorId = req.query.doctorId || req.headers.userid;
-const { startDate, endDate } = req.query;
+    const { startDate, endDate } = req.query;
 
     // Validate doctorId
     if (!doctorId) {
       return res.status(400).json({
         status: "fail",
-        message: "Doctor ID is required in headers"
+        message: "Doctor ID is required in headers",
       });
     }
 
@@ -1497,69 +1902,82 @@ const { startDate, endDate } = req.query;
       if (isNaN(start) || isNaN(end)) {
         return res.status(400).json({
           status: "fail",
-          message: "Invalid date format"
+          message: "Invalid date format",
         });
       }
       if (start > end) {
         return res.status(400).json({
           status: "fail",
-          message: "Start date cannot be after end date"
+          message: "Start date cannot be after end date",
         });
       }
       dateFilter = {
-        appointmentDate: { $gte: start, $lte: end }
+        appointmentDate: { $gte: start, $lte: end },
       };
     }
-
 
     // Build query
     const baseQuery = { doctorId, isDeleted: { $ne: true }, ...dateFilter };
 
-    
     // Count by status
-    const rescheduledCount = await appointmentModel.countDocuments({ ...baseQuery, appointmentStatus: 'rescheduled' });
-    const scheduledCount = await appointmentModel.countDocuments({ ...baseQuery, appointmentStatus: 'scheduled' });
-    const cancelledCount = await appointmentModel.countDocuments({ ...baseQuery, appointmentStatus: 'cancelled' });
-    const completedCount = await appointmentModel.countDocuments({ ...baseQuery, appointmentStatus: 'completed' });
-    const totalCount = await appointmentModel.countDocuments({ ...baseQuery, appointmentStatus: { $in: ['scheduled', 'rescheduled', 'cancelled', 'completed'] } });
-
-  
+    const rescheduledCount = await appointmentModel.countDocuments({
+      ...baseQuery,
+      appointmentStatus: "rescheduled",
+    });
+    const scheduledCount = await appointmentModel.countDocuments({
+      ...baseQuery,
+      appointmentStatus: "scheduled",
+    });
+    const cancelledCount = await appointmentModel.countDocuments({
+      ...baseQuery,
+      appointmentStatus: "cancelled",
+    });
+    const completedCount = await appointmentModel.countDocuments({
+      ...baseQuery,
+      appointmentStatus: "completed",
+    });
+    const totalCount = await appointmentModel.countDocuments({
+      ...baseQuery,
+      appointmentStatus: {
+        $in: ["scheduled", "rescheduled", "cancelled", "completed"],
+      },
+    });
 
     return res.status(200).json({
       status: "success",
       message: "Appointments counts retrieved successfully",
-       data: {
+      data: {
         total: totalCount,
         scheduled: scheduledCount,
         rescheduled: rescheduledCount,
         cancelled: cancelledCount,
-        completed: completedCount
-      }
+        completed: completedCount,
+      },
     });
-
   } catch (error) {
     console.error("Error in getAppointmentsByDoctorID:", error);
     return res.status(500).json({
       status: "fail",
-      message: error.message || "Internal server error"
+      message: error.message || "Internal server error",
     });
   }
 };
 
-
 exports.getAppointment = async (req, res) => {
   try {
-    let appointmentId = req.query?.appointmentId
-    const appointment = await appointmentModel.findOne({ appointmentId: appointmentId });
+    let appointmentId = req.query?.appointmentId;
+    const appointment = await appointmentModel.findOne({
+      appointmentId: appointmentId,
+    });
     return res.status(200).json({
-      status: 'success',
-      message: 'Appointment retrieved successfully',
-      data: appointment
+      status: "success",
+      message: "Appointment retrieved successfully",
+      data: appointment,
     });
   } catch (error) {
     return res.status(500).json({
-      status: 'fail',
-      message: 'Error retrieving appointment',
+      status: "fail",
+      message: "Error retrieving appointment",
       error: error.message,
     });
   }
@@ -1568,11 +1986,11 @@ exports.getAppointment = async (req, res) => {
 exports.getAppointmentsByDoctor = async (req, res) => {
   try {
     const { doctorId } = req.params;
-     const { patientId } = req.query;
+    const { patientId } = req.query;
 
     // Validate doctorId and userId
-    if (!doctorId ) {
-      return res.status(400).json({ error: 'Invalid Doctor ID or User ID' });
+    if (!doctorId) {
+      return res.status(400).json({ error: "Invalid Doctor ID or User ID" });
     }
 
     // Build query dynamically
@@ -1585,70 +2003,75 @@ exports.getAppointmentsByDoctor = async (req, res) => {
       query.userId = patientId;
     }
 
-
     // Fetch appointments for the doctor and user
-    const appointments = await appointmentModel.find(query).select('appointmentId userId doctorId appointmentType appointmentDate appointmentTime appointmentStatus createdAt _id addressId');
+    const appointments = await appointmentModel
+      .find(query)
+      .select(
+        "appointmentId userId doctorId appointmentType appointmentDate appointmentTime appointmentStatus createdAt _id addressId"
+      );
 
     // If no appointments found
     if (!appointments || appointments.length === 0) {
-      return res.status(404).json({ message: 'No appointments found for this doctor and patient' });
+      return res
+        .status(404)
+        .json({ message: "No appointments found for this doctor and patient" });
     }
-console.log("appointments===",appointments)
+    console.log("appointments===", appointments);
     // Return the appointments
     return res.status(200).json({
       success: true,
       data: appointments,
     });
   } catch (error) {
-    console.error('Error fetching appointments by doctor and user:', error);
+    console.error("Error fetching appointments by doctor and user:", error);
     return res.status(500).json({
       success: false,
-      error: 'Internal Server Error',
+      error: "Internal Server Error",
     });
   }
 };
 
-
 exports.getAllFamilyAppointments = async (req, res) => {
   try {
     // Step 1: Get userId from headers or params
-    const userId =   req.params?.userId || req.headers?.userid;
+    const userId = req.params?.userId || req.headers?.userid;
     const status = req.query.status;
 
     if (!userId) {
       return res.status(400).json({
-        status: 'fail',
-        message: 'userId is required in headers or params',
+        status: "fail",
+        message: "userId is required in headers or params",
       });
     }
 
     // Step 2: Fetch users where familyProvider matches userId or userId matches
-    const userServiceUrl = process.env.USER_SERVICE_URL || 'http://localhost:4002';
+    const userServiceUrl =
+      process.env.USER_SERVICE_URL || "http://localhost:4002";
     const userResponse = await axios.get(`${userServiceUrl}/users/getUserIds`, {
       params: {
-        $or: [
-          { familyProvider: userId },
-          { userId: userId },
-        ],
+        $or: [{ familyProvider: userId }, { userId: userId }],
         isDeleted: false, // Exclude deleted users
       },
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
         // Add authorization headers if needed
         // 'Authorization': `Bearer ${req.headers.authorization}`
       },
     });
 
-
-    if (!userResponse.data || !userResponse.data.data || userResponse.data.data.length === 0) {
+    if (
+      !userResponse.data ||
+      !userResponse.data.data ||
+      userResponse.data.data.length === 0
+    ) {
       return res.status(404).json({
-        status: 'fail',
-        message: 'No users found for this family provider',
+        status: "fail",
+        message: "No users found for this family provider",
       });
     }
 
     // Step 3: Extract userIds from the response
-    const userIds = userResponse.data.data.map(user => user.userId);
+    const userIds = userResponse.data.data.map((user) => user.userId);
 
     // Step 4: Fetch appointments for the list of userIds
     const query = { userId: { $in: userIds } };
@@ -1656,11 +2079,19 @@ exports.getAllFamilyAppointments = async (req, res) => {
     // Add appointmentStatus filter if provided
     if (status) {
       // Validate status against allowed values from appointmentSchema
-      const validStatuses = ['pending', 'scheduled', 'completed', 'cancelled', 'rescheduled'];
+      const validStatuses = [
+        "pending",
+        "scheduled",
+        "completed",
+        "cancelled",
+        "rescheduled",
+      ];
       if (!validStatuses.includes(status)) {
         return res.status(400).json({
-          status: 'fail',
-          message: `Invalid status. Must be one of: ${validStatuses.join(', ')}`,
+          status: "fail",
+          message: `Invalid status. Must be one of: ${validStatuses.join(
+            ", "
+          )}`,
         });
       }
       query.appointmentStatus = status;
@@ -1670,37 +2101,39 @@ exports.getAllFamilyAppointments = async (req, res) => {
 
     if (!appointmentResponse || appointmentResponse.length === 0) {
       return res.status(200).json({
-        status: 'success',
-        message: 'No appointments found for the family members',
-        data:[]
+        status: "success",
+        message: "No appointments found for the family members",
+        data: [],
       });
     }
 
     // Step 5: Combine user details with appointments for better context (optional)
-    const appointments = appointmentResponse.map(appointment => {
-      const user = userResponse.data.data.find(u => u.userId === appointment.userId);
+    const appointments = appointmentResponse.map((appointment) => {
+      const user = userResponse.data.data.find(
+        (u) => u.userId === appointment.userId
+      );
       return {
         ...appointment.toObject(), // Convert Mongoose document to plain object
-        patientName: user ? `${user.firstname} ${user.lastname || ''}`.trim() : appointment.patientName,
+        patientName: user
+          ? `${user.firstname} ${user.lastname || ""}`.trim()
+          : appointment.patientName,
       };
     });
 
     // Step 6: Return the response
     return res.status(200).json({
-      status: 'success',
-      message: 'Appointments retrieved successfully',
+      status: "success",
+      message: "Appointments retrieved successfully",
       data: appointments,
     });
-
   } catch (error) {
     return res.status(500).json({
-      status: 'error',
-      message: 'Error retrieving appointments',
+      status: "error",
+      message: "Error retrieving appointments",
       error: error.message,
     });
   }
 };
-
 
 exports.getAppointmentDataByUserIdAndDoctorId = async (req, res) => {
   try {
@@ -1715,10 +2148,11 @@ exports.getAppointmentDataByUserIdAndDoctorId = async (req, res) => {
     }
 
     // Fetch the latest appointment
-    const latestAppointment = await appointmentModel.findOne({
-      doctorId,
-      userId,
-    })
+    const latestAppointment = await appointmentModel
+      .findOne({
+        doctorId,
+        userId,
+      })
       .sort({ appointmentDate: -1, appointmentTime: -1 })
       .lean();
 
@@ -1745,38 +2179,33 @@ exports.getAppointmentDataByUserIdAndDoctorId = async (req, res) => {
 exports.getAllFamilyDoctors = async (req, res) => {
   try {
     // Step 1: Get userIds from headers or params
-   // Step 1: Get userIds from query string
+    // Step 1: Get userIds from query string
     let { userIds } = req.query;
 
     if (!userIds) {
       return res.status(400).json({
-        status: 'fail',
-        message: 'userIds are required',
+        status: "fail",
+        message: "userIds are required",
       });
     }
 
-   
     const appointments = await appointmentModel.find(
       { userId: { $in: userIds } },
       { doctorId: 1, _id: 0 }
     );
 
-   
-const doctorIds = [...new Set(appointments.map((a) => a.doctorId))];
-
-   
+    const doctorIds = [...new Set(appointments.map((a) => a.doctorId))];
 
     return res.status(200).json({
-      status: 'success',
-      message: 'Family doctors retrieved successfully',
+      status: "success",
+      message: "Family doctors retrieved successfully",
       data: doctorIds || [],
     });
-
   } catch (error) {
     return res.status(500).json({
-      status: 'error',
-      message: 'Error retrieving family doctors',
+      status: "error",
+      message: "Error retrieving family doctors",
       error: error.message,
     });
   }
-}
+};
