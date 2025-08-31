@@ -541,6 +541,7 @@ exports.getSlotsByDoctorIdAndDateForWhatsapp = async (req, res) => {
   const now = new Date();
   const slotDateStr = slots.date.toISOString().split('T')[0];
   // Condition 1: Send only available slots (future and not booked)
+  console.log()
   slots.slots = slots.slots.filter(slot => {
     if (slot.status !== 'available' || slot.appointmentId) return false;
     // Only check slot time (assume all slots are for the requested date)
