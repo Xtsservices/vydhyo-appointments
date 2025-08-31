@@ -26,6 +26,26 @@ export const getSlotsByDoctorIdAndDateForWhatsapp = async (req, res) => {
   }
   const slotDate = new Date(date);
   const slots = await DoctorSlotModel.findOne({ doctorId, addressId, date: slotDate });
+  if (slots && Array.isArray(slots.slots)) {
+    // Only keep slots with status 'available' and time greater than now if date is today
+    const now = new Date();
+    const isToday =
+      slotDate.getFullYear() === now.getFullYear() &&
+      slotDate.getMonth() === now.getMonth() &&
+      slotDate.getDate() === now.getDate();
+
+    slots.slots = slots.slots.filter(slot => {
+      if (slot.status !== 'available') return false;
+      if (isToday) {
+        // slot.time is assumed to be in "HH:mm" format
+        const [slotHour, slotMinute] = slot.time.split(':').map(Number);
+        const slotDateTime = new Date(slotDate);
+        slotDateTime.setHours(slotHour, slotMinute, 0, 0);
+        return slotDateTime > now;
+      }
+      return true;
+    });
+  }
   if (!slots) {
     return res.status(404).json({
       status: 'fail',
