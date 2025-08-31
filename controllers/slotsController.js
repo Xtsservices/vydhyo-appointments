@@ -540,13 +540,20 @@ exports.getSlotsByDoctorIdAndDateForWhatsapp = async (req, res) => {
   // Only show available slots that are in the future and not booked
   const now = new Date();
   const slotDateStr = slots.date.toISOString().split('T')[0];
+  // Condition 1: Send only available slots (future and not booked)
   slots.slots = slots.slots.filter(slot => {
     if (slot.status !== 'available' || slot.appointmentId) return false;
-    // Parse slotDateStr and slot.time as UTC to avoid timezone issues
-    const [year, month, day] = slotDateStr.split('-').map(Number);
+    // Only check slot time (assume all slots are for the requested date)
     const [hour, minute] = slot.time.split(':').map(Number);
-    const slotDateTime = new Date(Date.UTC(year, month - 1, day, hour, minute));
-    return slotDateTime.getTime() > Date.now();
+    const now = new Date();
+    // Compare slot time with current time if the slot is for today, else always include
+    const isToday = slotDateStr === now.toISOString().split('T')[0];
+    if (isToday) {
+      if (hour < now.getHours() || (hour === now.getHours() && minute <= now.getMinutes())) {
+        return false;
+      }
+    }
+    return true;
   });
   
   return res.status(200).json({ status: 'success', data: slots });
