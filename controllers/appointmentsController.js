@@ -10,7 +10,7 @@ const moment = require('moment-timezone');
 const { parseFlexibleDate } = require('../utils/utils');
 const axios = require('axios'); // Add axios for making HTTP requests
 const { PLATFORM_FEE } = require("../utils/fees");
-
+import fs from "fs";
 const {
   S3Client,
   PutObjectCommand,
