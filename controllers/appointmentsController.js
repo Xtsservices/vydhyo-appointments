@@ -146,6 +146,7 @@ async function cancelSlotAndUpdateAppointmentStatus(appointment, req, reason) {
 exports.createAppointment = async (req, res) => {
   try {
     // Step 1: Validate Input
+    console.log("request body", req.body);
     const { error } = appointmentSchema.validate(req.body);
     if (error) {
       return res.status(400).json({
