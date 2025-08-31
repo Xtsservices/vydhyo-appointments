@@ -238,8 +238,98 @@ exports.createAppointment = async (req, res) => {
     // Step 6: Call payment API (with newly created appointmentId)
     let paymentResponse = { status: "pending" };
     let updatedAppointment;
+    if (req.body.appSource === 'patientApp' && req.body.paymentMethod === 'wallet') {
+      try {
+        const finalAmount = req.body.finalAmount || req.body.amount;
+
+        // Check wallet balance
+        const walletResponse = await axios.get(
+          `http://localhost:4003/wallet/${req.body.userId}`,
+          { headers: { 'Content-Type': 'application/json' } }
+        );
+
+        if (walletResponse.data?.status !== 'success') {
+          await cancelSlotAndUpdateAppointmentStatus(appointment, req, 'Failed to fetch wallet balance');
+          return res.status(500).json({
+            status: 'fail',
+            message: 'Failed to fetch wallet balance',
+          });
+        }
+
+        const balance = walletResponse.data.data.balance;
+        if (balance < finalAmount) {
+          await cancelSlotAndUpdateAppointmentStatus(appointment, req, 'Insufficient wallet balance');
+          return res.status(400).json({
+            status: 'fail',
+            message: `Insufficient wallet balance. Available: ${balance}, Required: ${finalAmount}`,
+          });
+        }
+
+        // Create debit transaction
+        const transactionData = {
+          customerID: req.body.userId,
+          transactionID: `APMT_PAYMENT_${req.body.appointmentId}_${Date.now()}`,
+          amount: finalAmount,
+          transactionType: 'debit',
+          purpose: 'appointment_payment',
+          description: `Payment for appointment ${req.body.appointmentId}`,
+          currency: 'INR',
+          status: 'approved',
+          createdAt: Date.now(),
+          createdBy: req.headers?.userid || 'system',
+          updatedAt: Date.now(),
+          updatedBy: req.headers?.userid || 'system',
+          statusHistory: [
+            {
+              note: `Payment deducted for appointment ${req.body.appointmentId}`,
+              status: 'approved',
+              updatedAt: Date.now(),
+              updatedBy: req.headers?.userid || 'system',
+            },
+          ],
+        };
+
+        const transactionResponse = await axios.post(
+          `http://localhost:4003/wallet/createWalletTransaction`,
+          transactionData,
+          { headers: { 'Content-Type': 'application/json' } }
+        );
+
+        if (transactionResponse.data?.status !== 'success') {
+          await cancelSlotAndUpdateAppointmentStatus(appointment, req, 'Wallet payment failed');
+          return res.status(500).json({
+            status: 'fail',
+            message: `Wallet payment failed: ${transactionResponse.data?.message || 'Unknown error'}`,
+          });
+        }
+
+        paymentResponse = {
+          status: 'success',
+          data: {
+            ...transactionData,
+            paymentStatus: 'paid',
+            paymentMethod: 'wallet',
+            paymentFrom: 'appointment',
+            appSource: req.body.appSource,
+          },
+        };
+
+        updatedAppointment = await appointmentModel.findByIdAndUpdate(
+          appointment._id,
+          { appointmentStatus: 'scheduled', paymentStatus: 'paid' },
+          { new: true }
+        );
+      } catch (err) {
+        console.error('Error processing wallet payment:', err.message);
+        await cancelSlotAndUpdateAppointmentStatus(appointment, req, 'Wallet payment failed');
+        return res.status(err.response?.status || 500).json({
+          status: 'fail',
+          message: `Wallet payment failed: ${err.message}`,
+        });
+      }
+    } 
     // --- Case 1: patientApp with referralCode ---
-    if (req.body.appSource === "patientApp" && req.body.referralCode) {
+   else  if (req.body.appSource === "patientApp" && req.body.referralCode) {
       try {
         // Call users service to check referral status
         const referralResp = await axios.get(
