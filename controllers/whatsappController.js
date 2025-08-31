@@ -155,7 +155,6 @@ const vydhyobot = async (body) => {
       // Get doctors for city & specialization
       try {
         const { data } = await axios.get(`https://server.vydhyo.com/whatsapp/doctors-by-specialization-city?city=${encodeURIComponent(vydhyoSession.city)}&specialization=${encodeURIComponent(vydhyoSession.specialization)}`);
-        console.log(data);
         vydhyoSession.doctors = Array.isArray(data?.data) ? data.data : [];
         if ((vydhyoSession.doctors ?? []).length > 0) {
           reply = `You selected ${vydhyoSession.specialization}. Please select a doctor:\n${(vydhyoSession.doctors ?? []).map((d, i) => `${i + 1}) ${d.firstname} ${d.lastname}`).join('\n')}`;
@@ -163,7 +162,6 @@ const vydhyobot = async (body) => {
           reply = `❌ No doctors found for ${vydhyoSession.specialization} in ${vydhyoSession.city}.`;
         }
       } catch (error) {
-        console.log("whatsappbot","hello100",error);
         reply = `❌ No doctors found. Please try again later.`;
       }
     } else {
@@ -213,7 +211,7 @@ const vydhyobot = async (body) => {
       }
       vydhyoSession.dates = dates.map(date => date.key);
 
-      reply = `You selected clinic: ${vydhyoSession.clinicName}\nPlease select a date:\n${dates.map((date, i) => `${i + 1}) ${date.display}`).join('\n')}`;
+      reply = `You selected clinic: ${vydhyoSession.clinic}\nPlease select a date:\n${dates.map((date, i) => `${i + 1}) ${date.display}`).join('\n')}`;
       vydhyoSession.stage = 'date_selection';
     } else {
       reply = `❓ I didn't understand that. Please select a valid clinic number:\n${vydhyoSession.clinics?.map((c, i) => `${i + 1}) ${c.address}`).join('\n')}`;
@@ -224,7 +222,6 @@ const vydhyobot = async (body) => {
     if (vydhyoSession.dates && Number(text) >= 1 && Number(text) <= vydhyoSession.dates.length) {
       vydhyoSession.date = vydhyoSession.dates[Number(text) - 1];
       // Get slots for doctorId, addressId, date
-      console.log(`https://server.vydhyo.com/whatsappbooking/getSlotsByDoctorIdAndDateForWhatsapp?doctorId=${vydhyoSession.doctorId}&addressId=${vydhyoSession.addressId}&date=${encodeURIComponent(vydhyoSession.date)}`);
       try {
         const { data } = await axios.get(`https://server.vydhyo.com/whatsappbooking/getSlotsByDoctorIdAndDateForWhatsapp?doctorId=${vydhyoSession.doctorId}&addressId=${vydhyoSession.addressId}&date=${encodeURIComponent(vydhyoSession.date)}`);
         // Only keep slots with status 'available' and map to their time
