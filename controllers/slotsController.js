@@ -536,13 +536,16 @@ exports.getSlotsByDoctorIdAndDateForWhatsapp = async (req, res) => {
       message: 'No slots found for this doctor on the specified date',
     });
   }
+  // Only show available slots and exclude booked slots for WhatsApp
+  // Only show available slots that are in the future and not booked
   const now = new Date();
-  const slotDateStr = slotDate.toISOString().split('T')[0];
+  const slotDateStr = slots.date.toISOString().split('T')[0];
   slots.slots = slots.slots.filter(slot => {
-    if (slot.status !== 'available') return false;
+    if (slot.status !== 'available' || slot.appointmentId) return false;
     const slotDateTime = new Date(`${slotDateStr}T${slot.time}:00`);
     return slotDateTime > now;
   });
+  
   return res.status(200).json({ status: 'success', data: slots });
 };
 
