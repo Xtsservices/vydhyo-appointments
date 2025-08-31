@@ -85,27 +85,48 @@ const vydhyobot = async (body) => {
   let reply = '';
 
   // 1. City selection
-  if (!vydhyoSession.city) {
-    if (text.toLowerCase() === 'hi') {
-      vydhyoSession.city = undefined;
-      vydhyoSession.service = undefined;
-      vydhyoSession.specialization = undefined;
-      vydhyoSession.doctor = undefined;
-      vydhyoSession.date = undefined;
-      vydhyoSession.slot = undefined;
-      vydhyoSession.stage = 'city_selection';
-      try {
-        const { data } = await axios.get('https://server.vydhyo.com/whatsapp/cities');
-        vydhyoSession.cities = Array.isArray(data?.data) ? data.data : [];
-        if ((vydhyoSession.cities ?? []).length > 0) {
-          reply = `👋 Welcome to Vydhyo! Please select your city:\n${(vydhyoSession.cities ?? []).map((city, i) => `${i + 1}) ${city}`).join('\n')}`;
-        } else {
-          reply = `❌ No cities found. Please try again later.`;
-        }
-      } catch {
+  // Always allow "hi" to restart the session
+  if (text.toLowerCase() === 'hi') {
+    // Reset session
+    sessions[from] = {
+      items: [],
+      selectedCanteen: null,
+      canteens: [],
+      menus: null,
+      selectedMenu: null,
+      cities: [],
+      city: undefined,
+      service: undefined,
+      specializations: [],
+      specialization: undefined,
+      doctors: [],
+      doctor: undefined,
+      doctorId: undefined,
+      clinics: [],
+      clinic: undefined,
+      addressId: undefined,
+      dates: [],
+      date: undefined,
+      slots: [],
+      slot: undefined,
+      stage: 'city_selection',
+      cart: [],
+      selectedDate: undefined
+    };
+    const vydhyoSession = sessions[from];
+    try {
+      const { data } = await axios.get('https://server.vydhyo.com/whatsapp/cities');
+      vydhyoSession.cities = Array.isArray(data?.data) ? data.data : [];
+      if ((vydhyoSession.cities ?? []).length > 0) {
+        reply = `👋 Welcome to Vydhyo! Please select your city:\n${(vydhyoSession.cities ?? []).map((city, i) => `${i + 1}) ${city}`).join('\n')}`;
+      } else {
         reply = `❌ No cities found. Please try again later.`;
       }
-    } else if (vydhyoSession.cities && Number(text) >= 1 && Number(text) <= vydhyoSession.cities.length) {
+    } catch {
+      reply = `❌ No cities found. Please try again later.`;
+    }
+  } else if (!vydhyoSession.city) {
+    if (vydhyoSession.cities && Number(text) >= 1 && Number(text) <= vydhyoSession.cities.length) {
       vydhyoSession.city = vydhyoSession.cities[Number(text) - 1];
       vydhyoSession.stage = 'specialization_selection';
       // Get specializations for city
@@ -130,14 +151,11 @@ const vydhyobot = async (body) => {
       vydhyoSession.specialization = vydhyoSession.specializations[Number(text) - 1];
       vydhyoSession.stage = 'doctor_selection';
       // Get doctors for city & specialization
-      console.log(`https://server.vydhyo.com/whatsapp/doctors-by-specialization-city?city=${encodeURIComponent(vydhyoSession.city)}&specialization=${encodeURIComponent(vydhyoSession.specialization)}`);
       try {
         const { data } = await axios.get(`https://server.vydhyo.com/whatsapp/doctors-by-specialization-city?city=${encodeURIComponent(vydhyoSession.city)}&specialization=${encodeURIComponent(vydhyoSession.specialization)}`);
-        console.log("data", data);
 
         vydhyoSession.doctors = Array.isArray(data?.data) ? data.data : [];
         if ((vydhyoSession.doctors ?? []).length > 0) {
-          console.log(vydhyoSession.doctors);
           reply = `You selected ${vydhyoSession.specialization}. Please select a doctor:\n${(vydhyoSession.doctors ?? []).map((d, i) => `${i + 1}) ${d.firstname} ${d.lastname}`).join('\n')}`;
         } else {
           reply = `❌ No doctors found for ${vydhyoSession.specialization} in ${vydhyoSession.city}.`;
