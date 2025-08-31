@@ -87,6 +87,10 @@ const appointmentSchema = new mongoose.Schema({
 			default: null
 		}
 	},
+	referralCode: {
+    type: String,
+    default: null,
+  },
 	createdBy: {
 		type: String,
 		default: null
