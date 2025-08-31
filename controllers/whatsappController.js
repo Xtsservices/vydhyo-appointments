@@ -373,9 +373,7 @@ export const sendWhatsAppMessage = async (
 
 
 export const booking = async (req, res) => {
-  console.log("whatsappbot","hello100");
-
-  console.log("whatsappbot",req.body);
+  
 // Check if msgStatus is RECEIVED
   if (req.body.msgStatus !== 'RECEIVED') {
     // console.log('Ignoring webhook request as msgStatus is not RECEIVED.');
