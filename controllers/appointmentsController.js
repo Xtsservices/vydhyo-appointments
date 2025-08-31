@@ -146,7 +146,6 @@ async function cancelSlotAndUpdateAppointmentStatus(appointment, req, reason) {
 exports.createAppointment = async (req, res) => {
   try {
     // Step 1: Validate Input
-    console.log("request body", req.body);
     const { error } = appointmentSchema.validate(req.body);
     if (error) {
       return res.status(400).json({
@@ -201,9 +200,6 @@ exports.createAppointment = async (req, res) => {
     req.body.createdBy = req.headers?.userid || null;
     req.body.updatedBy = req.headers?.userid || null;
 
-    console.log("req.body", req.body);
-    console.log("req.file", req.file);
-
     // ✅ Step 5: Handle optional medicalReport (upload to S3)
 
     if (req.file) {
@@ -225,28 +221,8 @@ exports.createAppointment = async (req, res) => {
       req.body.medicalReport = `https://${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${s3Key}`;
     }
 
-    // if (req.file) {
-    //   const fileContent = fs.readFileSync(req.file.path);
-    //   const fileExt = path.extname(req.file.originalname);
-    //   const s3Key = `medicalReports/${req.body.appointmentId}_${Date.now()}${fileExt}`;
-
-    //   const uploadParams = {
-    //     Bucket: process.env.AWS_BUCKET_NAME,
-    //     Key: s3Key,
-    //     Body: fileContent,
-    //     ContentType: req.file.mimetype,
-    //   };
-
-    //   const s3Upload = await s3Client.send(new PutObjectCommand(uploadParams));
-    //   req.body.medicalReport = s3Upload.Location; // ✅ store file URL in DB
-
-    //   // cleanup temp file
-    //   fs.unlinkSync(req.file.path);
-    // }
-
     // step 5.1: Check if the doctor has slots available for the appointment date and time
     req.body.referralCode = req.body.referralCode || null;
-console.log("req.body",req.body)
      // step 5.1: Check if the doctor has slots available for the appointment date and time
 
     const bookingResult = await bookSlot(req);
