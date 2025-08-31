@@ -234,7 +234,7 @@ const vydhyobot = async (body) => {
       reply = `You selected clinic: ${vydhyoSession.clinic}\nPlease select a date:\n${dates.map((date, i) => `${i + 1}) ${date.display}`).join('\n')}`;
       vydhyoSession.stage = 'date_selection';
     } else {
-      reply = `❓ I didn't understand that. Please select a valid clinic number:\n${vydhyoSession.clinics?.map((c, i) => `${i + 1}) ${c.address}`).join('\n')}`;
+      reply = `❓ I didn't understand that. Please select a valid clinic number:\n${vydhyoSession.clinics?.map((c, i) => `${i + 1}) ${c.clinicName}`).join('\n')}`;
     }
   }
   // 5. Date selection
