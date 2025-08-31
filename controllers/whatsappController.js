@@ -9,6 +9,8 @@ import axios from 'axios';
 import { Buffer } from 'buffer';
 
 import { v4 as uuidv4 } from 'uuid';
+import e from 'express';
+import { error } from 'console';
 
 
 
@@ -160,7 +162,8 @@ const vydhyobot = async (body) => {
         } else {
           reply = `❌ No doctors found for ${vydhyoSession.specialization} in ${vydhyoSession.city}.`;
         }
-      } catch {
+      } catch (error) {
+        console.log("whatsappbot","hello100",error);
         reply = `❌ No doctors found. Please try again later.`;
       }
     } else {
