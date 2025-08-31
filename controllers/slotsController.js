@@ -536,6 +536,8 @@ exports.getSlotsByDoctorIdAndDateForWhatsapp = async (req, res) => {
       message: 'No slots found for this doctor on the specified date',
     });
   }
+
+  
   return res.status(200).json({ status: 'success', data: slots });
 };
 

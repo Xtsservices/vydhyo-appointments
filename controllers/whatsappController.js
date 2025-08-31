@@ -9,6 +9,8 @@ import axios from 'axios';
 import { Buffer } from 'buffer';
 
 import { v4 as uuidv4 } from 'uuid';
+import e from 'express';
+import { error } from 'console';
 
 
 
@@ -24,6 +26,26 @@ export const getSlotsByDoctorIdAndDateForWhatsapp = async (req, res) => {
   }
   const slotDate = new Date(date);
   const slots = await DoctorSlotModel.findOne({ doctorId, addressId, date: slotDate });
+  if (slots && Array.isArray(slots.slots)) {
+    // Only keep slots with status 'available' and time greater than now if date is today
+    const now = new Date();
+    const isToday =
+      slotDate.getFullYear() === now.getFullYear() &&
+      slotDate.getMonth() === now.getMonth() &&
+      slotDate.getDate() === now.getDate();
+
+    slots.slots = slots.slots.filter(slot => {
+      if (slot.status !== 'available') return false;
+      if (isToday) {
+        // slot.time is assumed to be in "HH:mm" format
+        const [slotHour, slotMinute] = slot.time.split(':').map(Number);
+        const slotDateTime = new Date(slotDate);
+        slotDateTime.setHours(slotHour, slotMinute, 0, 0);
+        return slotDateTime > now;
+      }
+      return true;
+    });
+  }
   if (!slots) {
     return res.status(404).json({
       status: 'fail',
@@ -85,27 +107,48 @@ const vydhyobot = async (body) => {
   let reply = '';
 
   // 1. City selection
-  if (!vydhyoSession.city) {
-    if (text.toLowerCase() === 'hi') {
-      vydhyoSession.city = undefined;
-      vydhyoSession.service = undefined;
-      vydhyoSession.specialization = undefined;
-      vydhyoSession.doctor = undefined;
-      vydhyoSession.date = undefined;
-      vydhyoSession.slot = undefined;
-      vydhyoSession.stage = 'city_selection';
-      try {
-        const { data } = await axios.get('https://server.vydhyo.com/whatsapp/cities');
-        vydhyoSession.cities = Array.isArray(data?.data) ? data.data : [];
-        if ((vydhyoSession.cities ?? []).length > 0) {
-          reply = `👋 Welcome to Vydhyo! Please select your city:\n${(vydhyoSession.cities ?? []).map((city, i) => `${i + 1}) ${city}`).join('\n')}`;
-        } else {
-          reply = `❌ No cities found. Please try again later.`;
-        }
-      } catch {
+  // Always allow "hi" to restart the session
+  if (text.toLowerCase() === 'hi') {
+    // Reset session
+    sessions[from] = {
+      items: [],
+      selectedCanteen: null,
+      canteens: [],
+      menus: null,
+      selectedMenu: null,
+      cities: [],
+      city: undefined,
+      service: undefined,
+      specializations: [],
+      specialization: undefined,
+      doctors: [],
+      doctor: undefined,
+      doctorId: undefined,
+      clinics: [],
+      clinic: undefined,
+      addressId: undefined,
+      dates: [],
+      date: undefined,
+      slots: [],
+      slot: undefined,
+      stage: 'city_selection',
+      cart: [],
+      selectedDate: undefined
+    };
+    const vydhyoSession = sessions[from];
+    try {
+      const { data } = await axios.get('https://server.vydhyo.com/whatsapp/cities');
+      vydhyoSession.cities = Array.isArray(data?.data) ? data.data : [];
+      if ((vydhyoSession.cities ?? []).length > 0) {
+        reply = `👋 Welcome to Vydhyo! Please select your city:\n${(vydhyoSession.cities ?? []).map((city, i) => `${i + 1}) ${city}`).join('\n')}`;
+      } else {
         reply = `❌ No cities found. Please try again later.`;
       }
-    } else if (vydhyoSession.cities && Number(text) >= 1 && Number(text) <= vydhyoSession.cities.length) {
+    } catch {
+      reply = `❌ No cities found. Please try again later.`;
+    }
+  } else if (!vydhyoSession.city) {
+    if (vydhyoSession.cities && Number(text) >= 1 && Number(text) <= vydhyoSession.cities.length) {
       vydhyoSession.city = vydhyoSession.cities[Number(text) - 1];
       vydhyoSession.stage = 'specialization_selection';
       // Get specializations for city
@@ -130,19 +173,15 @@ const vydhyobot = async (body) => {
       vydhyoSession.specialization = vydhyoSession.specializations[Number(text) - 1];
       vydhyoSession.stage = 'doctor_selection';
       // Get doctors for city & specialization
-      console.log(`https://server.vydhyo.com/whatsapp/doctors-by-specialization-city?city=${encodeURIComponent(vydhyoSession.city)}&specialization=${encodeURIComponent(vydhyoSession.specialization)}`);
       try {
         const { data } = await axios.get(`https://server.vydhyo.com/whatsapp/doctors-by-specialization-city?city=${encodeURIComponent(vydhyoSession.city)}&specialization=${encodeURIComponent(vydhyoSession.specialization)}`);
-        console.log("data", data);
-
         vydhyoSession.doctors = Array.isArray(data?.data) ? data.data : [];
         if ((vydhyoSession.doctors ?? []).length > 0) {
-          console.log(vydhyoSession.doctors);
           reply = `You selected ${vydhyoSession.specialization}. Please select a doctor:\n${(vydhyoSession.doctors ?? []).map((d, i) => `${i + 1}) ${d.firstname} ${d.lastname}`).join('\n')}`;
         } else {
           reply = `❌ No doctors found for ${vydhyoSession.specialization} in ${vydhyoSession.city}.`;
         }
-      } catch {
+      } catch (error) {
         reply = `❌ No doctors found. Please try again later.`;
       }
     } else {
@@ -192,7 +231,7 @@ const vydhyobot = async (body) => {
       }
       vydhyoSession.dates = dates.map(date => date.key);
 
-      reply = `You selected clinic: ${vydhyoSession.clinic.address}\nPlease select a date:\n${dates.map((date, i) => `${i + 1}) ${date.display}`).join('\n')}`;
+      reply = `You selected clinic: ${vydhyoSession.clinic}\nPlease select a date:\n${dates.map((date, i) => `${i + 1}) ${date.display}`).join('\n')}`;
       vydhyoSession.stage = 'date_selection';
     } else {
       reply = `❓ I didn't understand that. Please select a valid clinic number:\n${vydhyoSession.clinics?.map((c, i) => `${i + 1}) ${c.address}`).join('\n')}`;
@@ -203,7 +242,6 @@ const vydhyobot = async (body) => {
     if (vydhyoSession.dates && Number(text) >= 1 && Number(text) <= vydhyoSession.dates.length) {
       vydhyoSession.date = vydhyoSession.dates[Number(text) - 1];
       // Get slots for doctorId, addressId, date
-      console.log(`https://server.vydhyo.com/whatsappbooking/getSlotsByDoctorIdAndDateForWhatsapp?doctorId=${vydhyoSession.doctorId}&addressId=${vydhyoSession.addressId}&date=${encodeURIComponent(vydhyoSession.date)}`);
       try {
         const { data } = await axios.get(`https://server.vydhyo.com/whatsappbooking/getSlotsByDoctorIdAndDateForWhatsapp?doctorId=${vydhyoSession.doctorId}&addressId=${vydhyoSession.addressId}&date=${encodeURIComponent(vydhyoSession.date)}`);
         // Only keep slots with status 'available' and map to their time
@@ -355,9 +393,7 @@ export const sendWhatsAppMessage = async (
 
 
 export const booking = async (req, res) => {
-  console.log("whatsappbot","hello100");
-
-  console.log("whatsappbot",req.body);
+  
 // Check if msgStatus is RECEIVED
   if (req.body.msgStatus !== 'RECEIVED') {
     // console.log('Ignoring webhook request as msgStatus is not RECEIVED.');
