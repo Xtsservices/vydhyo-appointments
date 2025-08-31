@@ -210,6 +210,7 @@ const vydhyobot = async (body) => {
       reply = `❓ I didn't understand that. Please select a valid doctor number:\n${vydhyoSession.doctors?.map((d, i) => `${i + 1}) ${d.firstname} ${d.lastname}`).join('\n')}`;
     }
   }
+  
   // 4. Clinic selection
   else if (!vydhyoSession.clinic) {
     if (vydhyoSession.clinics && Number(text) >= 1 && Number(text) <= vydhyoSession.clinics.length) {
