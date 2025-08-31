@@ -542,8 +542,11 @@ exports.getSlotsByDoctorIdAndDateForWhatsapp = async (req, res) => {
   const slotDateStr = slots.date.toISOString().split('T')[0];
   slots.slots = slots.slots.filter(slot => {
     if (slot.status !== 'available' || slot.appointmentId) return false;
-    const slotDateTime = new Date(`${slotDateStr}T${slot.time}:00`);
-    return slotDateTime > now;
+    // Parse slotDateStr and slot.time as UTC to avoid timezone issues
+    const [year, month, day] = slotDateStr.split('-').map(Number);
+    const [hour, minute] = slot.time.split(':').map(Number);
+    const slotDateTime = new Date(Date.UTC(year, month - 1, day, hour, minute));
+    return slotDateTime.getTime() > Date.now();
   });
   
   return res.status(200).json({ status: 'success', data: slots });
