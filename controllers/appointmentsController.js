@@ -847,7 +847,7 @@ console.log("Wallet transaction updated to approved:", update.data);
         // Create payment record for non-patientApp
         paymentResponse = await createPayment(req.headers.authorization, {
           ...paymentData,
-          paymentMethod: req.body.paymentMethod || "unknown",
+          // paymentMethod: req.body.paymentMethod || "unknown",
         });
 
         if (!paymentResponse || paymentResponse.status !== "success") {
