@@ -32,7 +32,6 @@ async function creditReferralReward(appointment, rewardAmount) {
       message: `Referral ineligible for reward: code=${appointment.referralCode}, userId=${appointment.userId}, appointmentId=${appointment.appointmentId}, status=${referral.status}, rewardIssued=${referral.rewardIssued}`,
     };
     }
-
     // Step 3: Create wallet transaction in payments service
     const transactionResponse = await axios.post(
       'http://localhost:4003/wallet/createWalletTransaction',
@@ -44,6 +43,7 @@ async function creditReferralReward(appointment, rewardAmount) {
         purpose: 'referral_reward',
         description: `Reward for referral code ${referral.referralCode} on appointment ${appointment.appointmentId}`,
         currency: 'INR',
+        appointmentId: appointment.appointmentId,
         status: 'approved',
         createdAt: Date.now(),
         createdBy: 'system',
@@ -65,17 +65,15 @@ async function creditReferralReward(appointment, rewardAmount) {
         },
       }
     );
-console.log("transactionResponse",transactionResponse.data)
     if (transactionResponse.data?.status !== 'success') {
       throw {
       statusCode: 500,
       message: `Failed to create wallet transaction: ${transactionResponse.data?.message || 'Unknown error'}`,
     };
     }
-
     // Step 4: Update referral status to rewarded in users service
     const referralUpdateResp = await axios.patch(
-      `http://localhost:4001/auth/referral/${appointment.referralCode}/${appointment.appointmentId}`,
+      `http://localhost:4001/auth/referralCode/${appointment.referralCode}/${appointment.appointmentId}`,
       { status: 'rewarded', rewardIssued: true },
       {
         headers: {
@@ -84,7 +82,6 @@ console.log("transactionResponse",transactionResponse.data)
         },
       }
     );
-
     if (referralUpdateResp.data?.status !== 'success') {
       throw {
       statusCode: 500,

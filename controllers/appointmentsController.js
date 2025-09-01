@@ -13,7 +13,7 @@ const {
 const moment = require("moment-timezone");
 const { parseFlexibleDate } = require("../utils/utils");
 const axios = require("axios"); // Add axios for making HTTP requests
-const { PLATFORM_FEE } = require("../utils/fees");
+const { PLATFORM_FEE, REWARD_AMOUNT } = require("../utils/fees");
 const fs = require("fs");
 const path = require("path");
 const {
@@ -21,6 +21,7 @@ const {
   PutObjectCommand,
   GetObjectCommand,
 } = require("@aws-sdk/client-s3");
+const { creditReferralReward } = require("../services/referralService");
 
 const AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME;
 const AWS_BUCKET_REGION = process.env.AWS_REGION;
@@ -143,7 +144,8 @@ async function cancelSlotAndUpdateAppointmentStatus(appointment, req, reason) {
   return { slotResult, appointmentResult };
 }
 
-exports.createAppointment = async (req, res) => {
+//original
+exports.createAppointment0 = async (req, res) => {
   try {
     // Step 1: Validate Input
     const { error } = appointmentSchema.validate(req.body);
@@ -236,7 +238,7 @@ exports.createAppointment = async (req, res) => {
     const appointment = await appointmentModel.create(req.body);
 
     // Step 6: Call payment API (with newly created appointmentId)
-    let paymentResponse = { status: "pending" };
+   
     let updatedAppointment;
     if (req.body.appSource === 'patientApp' && req.body.paymentMethod === 'wallet') {
       try {
@@ -491,6 +493,409 @@ exports.createAppointment = async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({
+      message: "Error creating appointment",
+      error: error.message,
+    });
+  }
+};
+
+exports.createAppointment = async (req, res) => {
+  try {
+    // Step 1: Validate Input
+    const { error } = appointmentSchema.validate(req.body);
+    if (error) {
+      return res.status(400).json({
+        status: "fail",
+        message: error.details[0].message,
+      });
+    }
+
+    // Step 2: Check appointment time validity
+    const appointmentDateTime = moment.tz(
+      `${req.body.appointmentDate} ${req.body.appointmentTime}`,
+      "YYYY-MM-DD HH:mm",
+      "Asia/Kolkata"
+    );
+    const now = moment.tz("Asia/Kolkata");
+
+    if (appointmentDateTime.isBefore(now)) {
+      return res.status(400).json({
+        status: "fail",
+        message: "Appointment date & time must not be in the past.",
+      });
+    }
+
+    // Step 3: Check if slot is already booked
+    const checkSlotAvailable = await appointmentModel.find({
+      doctorId: req.body.doctorId,
+      appointmentDate: new Date(req.body.appointmentDate),
+      appointmentTime: req.body.appointmentTime,
+      appointmentStatus: { $in: ["pending", "scheduled"] },
+    });
+
+    if (checkSlotAvailable.length > 0) {
+      return res.status(400).json({
+        status: "fail",
+        message: "Slot already booked or unavailable for this date and time",
+      });
+    }
+
+     req.body.createdBy = req.headers?.userid || null;
+    req.body.updatedBy = req.headers?.userid || null;
+    req.body.referralCode = req.body.referralCode || null;
+    // Step 4: Validate wallet balance (if applicable)
+    const finalAmount = req.body.finalAmount || req.body.amount;
+    if (req.body.appSource === "patientApp" && req.body.paymentMethod === "wallet") {
+      try {
+        const walletResponse = await axios.get(
+          `http://localhost:4003/wallet/${req.body.userId}`,
+          { headers: { "Content-Type": "application/json" } }
+        );
+
+        if (walletResponse.data?.status !== "success") {
+          return res.status(500).json({
+            status: "fail",
+            message: "Failed to fetch wallet balance",
+          });
+        }
+
+        const balance = walletResponse.data.data.balance;
+        console.log("Wallet balance:", balance);
+        if (balance < finalAmount) {
+          return res.status(400).json({
+            status: "fail",
+            message: `Insufficient wallet balance. Available: ${balance}, Required: ${finalAmount}`,
+          });
+        }
+      } catch (err) {
+        console.error("Error checking wallet balance:", err.message);
+        return res.status(err.response?.status || 500).json({
+          status: "fail",
+          message: `Failed to check wallet balance: ${err.message}`,
+        });
+      }
+    }
+
+    // Step 5: Validate referral code (if applicable)
+    if (req.body.appSource === "patientApp" && req.body.referralCode) {
+      try {
+        const referralResp = await axios.get(
+          `http://localhost:4001/auth/referral/${req.body.referralCode}`,
+          {
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: req.headers.authorization || "", // Added for consistency
+            },
+          }
+        );
+        const referral = referralResp.data?.data;
+
+        if (!referral) {
+          return res.status(400).json({
+            status: "fail",
+            message: "Invalid referral code",
+          });
+        }
+
+        if (referral.referredTo !== req.body.createdBy) {
+          return res.status(400).json({
+            status: "fail",
+            message: "This referral code is not valid for this user",
+          });
+        }
+
+        if (referral.status === "completed") {
+          return res.status(400).json({
+            status: "fail",
+            message: "Referral already used",
+          });
+        }
+      } catch (err) {
+        console.error("Error verifying referral:", err.message);
+        return res.status(500).json({
+          status: "fail",
+          message: "Error verifying referral",
+          error: err.message,
+        });
+      }
+    }
+
+    // Step 6: Generate appointmentId
+    const appointmentCounter = await sequenceSchema.findByIdAndUpdate(
+      { _id: SEQUENCE_PREFIX.APPOINTMENTS_SEQUENCE.APPOINTMENTS_MODEL },
+      { $inc: { seq: 1 } },
+      { new: true, upsert: true }
+    );
+
+    // Step 7: Prepare appointment data
+    req.body.appointmentId =
+      SEQUENCE_PREFIX.APPOINTMENTS_SEQUENCE.SEQUENCE.concat(appointmentCounter.seq);
+   
+
+    // Step 8: Handle optional medicalReport (upload to S3)
+    if (req.file) {
+      const fileExt = path.extname(req.file.originalname);
+      const s3Key = `medicalReports/${req.body.appointmentId}_${Date.now()}${fileExt}`;
+
+      const uploadParams = {
+        Bucket: process.env.AWS_BUCKET_NAME,
+        Key: s3Key,
+        Body: req.file.buffer,
+        ContentType: req.file.mimetype,
+      };
+
+      await s3Client.send(new PutObjectCommand(uploadParams));
+      req.body.medicalReport = `https://${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${s3Key}`;
+    }
+
+    // Step 9: Check and book slot
+    const bookingResult = await bookSlot(req);
+    if (!bookingResult || bookingResult.modifiedCount === 0) {
+      return res.status(400).json({
+        status: "fail",
+        message: "Slot already booked or slots do not exist. Check slot availability.",
+      });
+    }
+
+    // Step 10: Create appointment
+    const appointment = await appointmentModel.create(req.body);
+
+    // Step 11: Process payment
+    let paymentResponse;
+    let updatedAppointment;
+    const paymentData = {
+      userId: req.body.userId,
+      doctorId: req.body.doctorId,
+      addressId: req.body.addressId,
+      appointmentId: req.body.appointmentId,
+      actualAmount: req.body.amount,
+      discount: req.body.discount || 0,
+      discountType: req.body.discountType,
+       finalAmount: req.body.finalAmount,
+      paymentStatus: "paid",
+      paymentFrom: "appointment",
+      appSource: req.body.appSource,
+    };
+
+    if (req.body.appSource === "patientApp" && req.body.paymentMethod === "wallet") {
+      try {
+        const transactionData = {
+          customerID: req.body.userId,
+          transactionID: `APMT_PAYMENT_${req.body.appointmentId}_${Date.now()}`,
+          amount: finalAmount,
+          transactionType: "debit",
+          purpose: "appointment_payment",
+          description: `Payment for appointment ${req.body.appointmentId}`,
+          currency: "INR",
+          appointmentId: req.body.appointmentId,
+          status: "pending",
+          createdAt: Date.now(),
+          createdBy: req.headers?.userid || "system",
+          updatedAt: Date.now(),
+          updatedBy: req.headers?.userid || "system",
+          statusHistory: [
+            {
+             note: `Pending payment for appointment ${req.body.appointmentId}`,
+          status: "pending",
+              updatedAt: Date.now(),
+              updatedBy: req.headers?.userid || "system",
+            },
+          ],
+        };
+
+        const transactionResponse = await axios.post(
+          `http://localhost:4003/wallet/createWalletTransaction`,
+          transactionData,
+          { headers: { "Content-Type": "application/json" } }
+        );
+console.log("transactionResponse", transactionResponse.data);
+        if (transactionResponse.data?.status !== "success") {
+          await cancelSlotAndUpdateAppointmentStatus(appointment, req, "Wallet payment failed");
+          return res.status(500).json({
+            status: "fail",
+            message: `Wallet payment failed: ${transactionResponse.data?.message || "Unknown error"}`,
+          });
+        }
+console.log("Wallet transaction created:", transactionResponse.data.data);
+        // Create payment record for wallet
+        paymentResponse = await createPayment(req.headers.authorization, {
+          ...paymentData,
+          paymentMethod: "wallet",
+          platformFee: PLATFORM_FEE,
+        });
+console.log("paymentResponse", paymentResponse);
+        if (!paymentResponse || paymentResponse.status !== "success") {
+          // Reverse wallet transaction
+      await axios.post(
+        `http://localhost:4003/wallet/updateWalletTransaction`,
+        {
+          customerID: req.body.userId,
+          transactionID: transactionData.transactionID,
+          status: "failed",
+          statusHistory: [
+            ...transactionData.statusHistory,
+            {
+              note: `Transaction failed due to payment service error`,
+              status: "failed",
+              updatedAt: Date.now(),
+              updatedBy: req.headers?.userid || "system",
+            },
+          ],
+        },
+        { headers: { "Content-Type": "application/json" } }
+      );
+          await cancelSlotAndUpdateAppointmentStatus(appointment, req, "Payment failed");
+          return res.status(500).json({
+            status: "fail",
+            message: "Payment failed, appointment not created.",
+          });
+        }
+
+        // Update wallet transaction to approved
+  const update=   await axios.post(
+      `http://localhost:4003/wallet/updateWalletTransaction`,
+      {
+        customerID: req.body.userId,
+        transactionID: transactionData.transactionID,
+        status: "approved",
+        statusHistory: [
+          ...transactionData.statusHistory,
+          {
+            note: `Payment approved for appointment ${req.body.appointmentId}`,
+            status: "approved",
+            updatedAt: Date.now(),
+            updatedBy: req.headers?.userid || "system",
+          },
+        ],
+      },
+      { headers: { "Content-Type": "application/json" } }
+    );
+console.log("Wallet transaction updated to approved:", update.data);
+        // Update appointment for wallet payment
+        updatedAppointment = await appointmentModel.findByIdAndUpdate(
+          appointment._id,
+          { appointmentStatus: "scheduled", paymentStatus: "paid" },
+          { new: true }
+        );
+      } catch (err) {
+        console.log("err", err?.response?.data);
+        console.error("Error processing wallet payment:", err.message);
+       
+        await cancelSlotAndUpdateAppointmentStatus(appointment, req, "Wallet payment failed");
+        return res.status(err.response?.status || 500).json({
+          status: "fail",
+          message: `Wallet payment failed: ${err.message}`,
+        });
+      }
+    } else if (req.body.appSource === "patientApp" && req.body.referralCode) {
+      try {
+        // Create payment record for referral
+        paymentResponse = await createPayment(req.headers.authorization, {
+          ...paymentData,
+          paymentMethod: "free",
+          platformFee: PLATFORM_FEE,
+        });
+
+        if (!paymentResponse || paymentResponse.status !== "success") {
+          await cancelSlotAndUpdateAppointmentStatus(appointment, req, "Payment failed");
+          return res.status(500).json({
+            status: "fail",
+            message: "Payment failed, appointment not created.",
+          });
+        }
+
+        // Update referral status to completed
+        const referralUpdateResp = await axios.patch(
+          `http://localhost:4001/auth/referral/${req.body.referralCode}/${req.body.createdBy}`,
+          {
+            status: "completed",
+            appointmentId: req.body.appointmentId,
+          },
+          {
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: req.headers.authorization || "",
+            },
+          }
+        );
+
+        if (referralUpdateResp.data?.status !== "success") {
+          await cancelSlotAndUpdateAppointmentStatus(appointment, req, "Referral update failed");
+          return res.status(500).json({
+            status: "fail",
+            message: "Failed to update referral status",
+          });
+        }
+
+        // Update appointment for referral
+        updatedAppointment = await appointmentModel.findByIdAndUpdate(
+          appointment._id,
+          { appointmentStatus: "scheduled", paymentStatus: "paid" },
+          { new: true }
+        );
+      } catch (err) {
+        console.error("Error processing referral payment:", err.message);
+        await cancelSlotAndUpdateAppointmentStatus(appointment, req, "Referral payment failed");
+        return res.status(500).json({
+          status: "fail",
+          message: "Error processing referral payment",
+          error: err.message,
+        });
+      }
+    } else if (req.body.paymentStatus === "paid" && req.body.appSource !== "patientApp") {
+      try {
+        // Create payment record for non-patientApp
+        paymentResponse = await createPayment(req.headers.authorization, {
+          ...paymentData,
+          paymentMethod: req.body.paymentMethod || "unknown",
+        });
+
+        if (!paymentResponse || paymentResponse.status !== "success") {
+          await cancelSlotAndUpdateAppointmentStatus(appointment, req, "Payment failed");
+          return res.status(500).json({
+            status: "fail",
+            message: "Payment failed, appointment not created.",
+          });
+        }
+
+        // Update appointment for non-patientApp
+        updatedAppointment = await appointmentModel.findByIdAndUpdate(
+          appointment._id,
+          { appointmentStatus: "scheduled", paymentStatus: "paid" },
+          { new: true }
+        );
+      } catch (err) {
+        console.error("Error processing payment:", err.message);
+        await cancelSlotAndUpdateAppointmentStatus(appointment, req, "Payment failed");
+        return res.status(500).json({
+          status: "fail",
+          message: "Error processing payment",
+          error: err.message,
+        });
+      }
+    } else {
+      // Handle cases where payment is not required or invalid
+      return res.status(400).json({
+        status: "fail",
+        message: "Invalid payment configuration",
+      });
+    }
+
+    return res.status(200).json({
+      status: "success",
+      message: "Appointment created successfully",
+      data: {
+        appointmentDetails: updatedAppointment || appointment,
+        paymentDetails: paymentResponse.data,
+        appointmentId: req.body.appointmentId,
+        appointmentObjId: appointment._id,
+        platformfee: PLATFORM_FEE,
+      },
+    });
+  } catch (error) {
+    console.error("Error creating appointment:", error.message);
+    return res.status(500).json({
+      status: "fail",
       message: "Error creating appointment",
       error: error.message,
     });
@@ -1283,107 +1688,107 @@ exports.rescheduleAppointment = async (req, res) => {
   }
 };
 
-async function creditReferralReward(appointment, rewardAmount) {
-  try {
-    // Step 1: Fetch referral details from users service
-    const referralResp = await axios.get(
-      `http://localhost:4001/auth/referral/${appointment.referralCode}/${appointment.appointmentId}`,
-       {
-        headers: {
-          'Content-Type': 'application/json',
-          // Authorization: req.headers.authorization || ''
-        },
-      }
-    );
+// async function creditReferralReward(appointment, rewardAmount) {
+//   try {
+//     // Step 1: Fetch referral details from users service
+//     const referralResp = await axios.get(
+//       `http://localhost:4001/auth/referral/${appointment.referralCode}/${appointment.appointmentId}`,
+//        {
+//         headers: {
+//           'Content-Type': 'application/json',
+//           // Authorization: req.headers.authorization || ''
+//         },
+//       }
+//     );
 
-    const referral = referralResp.data?.data;
-    if (!referral) {
-      throw {
-      statusCode: 404,
-      message: `Referral not found for code: ${appointment.referralCode} and appointment ID: ${appointment.appointmentId}`,
-    };
-    }
+//     const referral = referralResp.data?.data;
+//     if (!referral) {
+//       throw {
+//       statusCode: 404,
+//       message: `Referral not found for code: ${appointment.referralCode} and appointment ID: ${appointment.appointmentId}`,
+//     };
+//     }
 
-    // Step 2: Validate referral
-    if (
-    referral.appointmentId !== appointment.appointmentId ||
-      referral.status !== 'completed' ||
-      referral.rewardIssued
-    ) {
-      throw {
-      statusCode: 400,
-      message: `Referral ineligible for reward: code=${appointment.referralCode}, userId=${appointment.userId}, appointmentId=${appointment.appointmentId}, status=${referral.status}, rewardIssued=${referral.rewardIssued}`,
-    };
-    }
+//     // Step 2: Validate referral
+//     if (
+//     referral.appointmentId !== appointment.appointmentId ||
+//       referral.status !== 'completed' ||
+//       referral.rewardIssued
+//     ) {
+//       throw {
+//       statusCode: 400,
+//       message: `Referral ineligible for reward: code=${appointment.referralCode}, userId=${appointment.userId}, appointmentId=${appointment.appointmentId}, status=${referral.status}, rewardIssued=${referral.rewardIssued}`,
+//     };
+//     }
 
-    // Step 3: Create wallet transaction in payments service
-    const transactionResponse = await axios.post(
-      'http://localhost:4003/wallet/createWalletTransaction',
-      {
-        customerID: referral.referredBy,
-        transactionID: `REF_REWARD_${referral.referralCode}_${Date.now()}`,
-        amount: rewardAmount,
-        transactionType: 'credit',
-        purpose: 'referral_reward',
-        description: `Reward for referral code ${referral.referralCode} on appointment ${appointment.appointmentId}`,
-        currency: 'INR',
-        status: 'approved',
-        createdAt: Date.now(),
-        createdBy: 'system',
-        updatedAt: Date.now(),
-        updatedBy: 'system',
-        statusHistory: [
-          {
-            note: `Reward credited for referral ${referral.referralCode}`,
-            status: 'approved',
-            updatedAt: Date.now(),
-            updatedBy: 'system',
-          },
-        ],
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          // Authorization: req.headers?.authorization || '',
-        },
-      }
-    );
-console.log("transactionResponse",transactionResponse.data)
-    if (transactionResponse.data?.status !== 'success') {
-      throw {
-      statusCode: 500,
-      message: `Failed to create wallet transaction: ${transactionResponse.data?.message || 'Unknown error'}`,
-    };
-    }
+//     // Step 3: Create wallet transaction in payments service
+//     const transactionResponse = await axios.post(
+//       'http://localhost:4003/wallet/createWalletTransaction',
+//       {
+//         customerID: referral.referredBy,
+//         transactionID: `REF_REWARD_${referral.referralCode}_${Date.now()}`,
+//         amount: rewardAmount,
+//         transactionType: 'credit',
+//         purpose: 'referral_reward',
+//         description: `Reward for referral code ${referral.referralCode} on appointment ${appointment.appointmentId}`,
+//         currency: 'INR',
+//         status: 'approved',
+//         createdAt: Date.now(),
+//         createdBy: 'system',
+//         updatedAt: Date.now(),
+//         updatedBy: 'system',
+//         statusHistory: [
+//           {
+//             note: `Reward credited for referral ${referral.referralCode}`,
+//             status: 'approved',
+//             updatedAt: Date.now(),
+//             updatedBy: 'system',
+//           },
+//         ],
+//       },
+//       {
+//         headers: {
+//           'Content-Type': 'application/json',
+//           // Authorization: req.headers?.authorization || '',
+//         },
+//       }
+//     );
+// console.log("transactionResponse",transactionResponse.data)
+//     if (transactionResponse.data?.status !== 'success') {
+//       throw {
+//       statusCode: 500,
+//       message: `Failed to create wallet transaction: ${transactionResponse.data?.message || 'Unknown error'}`,
+//     };
+//     }
 
-    // Step 4: Update referral status to rewarded in users service
-    const referralUpdateResp = await axios.patch(
-      `http://localhost:4001/auth/referral/${appointment.referralCode}/${appointment.appointmentId}`,
-      { status: 'rewarded', rewardIssued: true },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          // Authorization: req.headers?.authorization || '',
-        },
-      }
-    );
+//     // Step 4: Update referral status to rewarded in users service
+//     const referralUpdateResp = await axios.patch(
+//       `http://localhost:4001/auth/referral/${appointment.referralCode}/${appointment.appointmentId}`,
+//       { status: 'rewarded', rewardIssued: true },
+//       {
+//         headers: {
+//           'Content-Type': 'application/json',
+//           // Authorization: req.headers?.authorization || '',
+//         },
+//       }
+//     );
 
-    if (referralUpdateResp.data?.status !== 'success') {
-      throw {
-      statusCode: 500,
-      message: `Failed to update referral status: ${referralUpdateResp.data?.message || 'Unknown error'}`,
-    };
-    }
+//     if (referralUpdateResp.data?.status !== 'success') {
+//       throw {
+//       statusCode: 500,
+//       message: `Failed to update referral status: ${referralUpdateResp.data?.message || 'Unknown error'}`,
+//     };
+//     }
 
-    console.log(
-      `Reward of ${rewardAmount} INR credited to user ${referral.referredBy} wallet for referral ${referral.referralCode}`
-    );
-    return true;
-  } catch (error) {
-    console.error('Error in creditReferralReward:', error.message);
-    return false;
-  }
-}
+//     console.log(
+//       `Reward of ${rewardAmount} INR credited to user ${referral.referredBy} wallet for referral ${referral.referralCode}`
+//     );
+//     return true;
+//   } catch (error) {
+//     console.error('Error in creditReferralReward:', error.message);
+//     return false;
+//   }
+// }
 
 exports.completeAppointment = async (req, res) => {
   const { appointmentId, appointmentNotes = "" } = req.body;
@@ -1433,10 +1838,11 @@ exports.completeAppointment = async (req, res) => {
 
     // Credit referral reward if referralCode exists
     if (updateAppointment.referralCode) {
-      const REWARD_AMOUNT = 100; // Define your reward amount here (e.g., 100 INR)
+      // const REWARD_AMOUNT = 100; // Define your reward amount here (e.g., 100 INR)
     try {
         await creditReferralReward(updateAppointment, REWARD_AMOUNT);
       } catch (error) {
+        consolwe.error("Referral Reward Error:", error);  
         // Return the error from creditReferralReward, but allow appointment completion
         return res.status(error.statusCode || 500).json({
           status: 'fail',

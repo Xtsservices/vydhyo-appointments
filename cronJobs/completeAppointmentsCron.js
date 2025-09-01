@@ -2,6 +2,7 @@ const cron = require('node-cron');
 const mongoose = require('mongoose');
 const appointmentsModel = require('../models/appointmentsModel');
 const { creditReferralReward } = require('../services/referralService');
+const { REWARD_AMOUNT } = require('../utils/fees');
 
 // Function to mark appointments as completed if older than 48 hours
 const autoCompleteAppointments = async () => {
@@ -63,7 +64,7 @@ const autoCompleteAppointments = async () => {
       console.log(`Auto-completed appointment ${appointment.appointmentId}`);
       // Credit referral reward if referralCode exists
       if (updatedAppointment.referralCode) {
-        const REWARD_AMOUNT = 100;
+        // const REWARD_AMOUNT = 100;
         try {
           await creditReferralReward(updatedAppointment, REWARD_AMOUNT);
           console.log(`Referral reward credited for appointment ${appointment.appointmentId}`);
