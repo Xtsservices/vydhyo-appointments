@@ -22,6 +22,7 @@ const {
   GetObjectCommand,
 } = require("@aws-sdk/client-s3");
 const { creditReferralReward } = require("../services/referralService");
+const { sendOTPSMS } = require("../utils/sms");
 
 const AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME;
 const AWS_BUCKET_REGION = process.env.AWS_REGION;
@@ -1467,6 +1468,7 @@ exports.cancelAppointment = async (req, res) => {
       status: "refund_pending",
     });
 
+    console.log("Payment update response:", payment);
     if (!payment || payment.status !== "success") {
       return res.status(500).json({
         status: "fail",
@@ -1474,6 +1476,84 @@ exports.cancelAppointment = async (req, res) => {
           "Failed to update payment status to refund_pending. Please try again later.",
       });
     }
+
+    // Handle refund for wallet payments
+    if (payment.data.paymentMethod === "wallet") {
+      try {
+        const refundTransactionData = {
+          customerID: appointment.userId,
+          transactionID: `REFUND_${appointment.appointmentId}_${Date.now()}`,
+          amount: payment.data.finalAmount,
+          transactionType: "credit",
+          purpose: "appointment_refunded",
+          description: `Refund for canceled appointment ${appointment.appointmentId}`,
+          currency: "INR",
+          appointmentId: appointment.appointmentId,
+          status: "approved", // Directly mark as approved for wallet refunds
+          createdAt: Date.now(),
+          createdBy: req.headers?.userid || "system",
+          updatedAt: Date.now(),
+          updatedBy: req.headers?.userid || "system",
+          statusHistory: [
+            {
+                note: `Refund approved for appointment ${appointment.appointmentId}`,
+                status: "approved",
+              updatedAt: Date.now(),
+              updatedBy: req.headers?.userid || "system",
+            },
+          ],
+        };
+
+        // Create refund transaction in wallet
+        const refundTransactionResponse = await axios.post(
+          `http://localhost:4003/wallet/createWalletTransaction`,
+          refundTransactionData,
+          {
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: req.headers.authorization || "",
+            },
+          }
+        );
+console.log("Refund transaction response:", refundTransactionResponse.data);
+        if (refundTransactionResponse.data?.status !== "success") {
+          return res.status(500).json({
+        status: "fail",
+        message:`Failed to create refund transaction: ${refundTransactionResponse.data?.message || "Unknown error"}`
+
+      }); 
+        }
+
+       console.log("Wallet refund transaction created:", refundTransactionResponse.data.data);
+        // Update payment status to refunded
+        const finalPaymentUpdate = await updatePayment(req.headers.authorization, {
+          appointmentId: appointment.appointmentId,
+          status: "refunded",
+        });
+console.log("Final payment update after refund:", finalPaymentUpdate);
+        if (!finalPaymentUpdate || finalPaymentUpdate.status !== "success") {
+            return res.status(500).json({
+        status: "fail",
+        message:"Failed to update payment status to refunded"
+      });
+        }
+      } catch (err) {
+        console.log("Error processing wallet refund:", err.message);
+        console.error("Refund Error:", err.message);
+        // Rollback payment status to failed if refund fails
+        await updatePayment(req.headers.authorization, {
+          appointmentId: appointment.appointmentId,
+          status: "refund_failed",
+        });
+        return res.status(500).json({
+          status: "fail",
+          message: `Refund failed: ${err.message}`,
+        });
+      }
+    }
+
+
+        
     /**
      * Cancel the slot in DoctorSlotModel
      * This will set the slot status to 'available' and clear the appointmentId
@@ -1674,6 +1754,44 @@ exports.rescheduleAppointment = async (req, res) => {
         .status(404)
         .json({ status: "fail", message: "Failed to reschedule appointment" });
     }
+    
+      // ✅ SMS to Patient: Sends an SMS notification to the patient’s registered mobile number
+
+    let doctorName = "Doctor";
+    let patientMobile = null;
+  const templateid = "1707175447494195093"; 
+
+    try {
+      const userResp = await axios.post(
+        "http://localhost:4002/users/getUsersByIds",
+        { userIds: [appointment.doctorId, appointment.userId] },
+        { headers: { "Content-Type": "application/json" } }
+      );
+
+      if (userResp?.data?.users?.length > 0) {
+        userResp.data.users.forEach(u => {
+          if (u.userId === appointment.doctorId) {
+            doctorName = `${u.firstname || ""} ${u.lastname || ""}`.trim();
+          }
+          if (u.userId === appointment.userId) {
+            patientMobile = u.mobile; // ✅ Patient mobile for SMS
+          }
+        });
+      }
+    } catch (err) {
+      console.error("Error fetching user details:", err.message);
+    }
+    if (patientMobile) {
+  const formattedDate = moment(newDate).format("DD-MM-YYYY");
+  const rescheduleMsg = `Your appointment with Dr. ${doctorName} has been rescheduled to ${formattedDate} at ${newTime}. Thank you for using VYDHYO.`;
+
+  try {
+    await sendOTPSMS(patientMobile, rescheduleMsg,  templateid, "Dear {#var#} {#var#}");
+  } catch (error) {
+    console.log("Error sending SMS:", error);
+    console.error("Failed to send SMS:", error);
+  }
+}
 
     return res.status(200).json({
       status: "success",
