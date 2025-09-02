@@ -545,7 +545,7 @@ const createPaymentLink = async (payment) => {
       },
       link_meta: {
         return_url: `${process.env.APPLICATION_URL}/paymentResponse?link_id=${payment.linkId}`,
-        notify_url: `${process.env.BASE_URL}/api/order/cashfreecallback`,
+        notify_url: `${process.env.BASE_URL}/whatsappbooking/cashfreecallback`,
       },
       link_notify: {
         send_sms: false,
@@ -981,6 +981,49 @@ export const CashfreePaymentLinkDetails = async (req, res) => {
     });
   }
 };
+
+// ✅ Cashfree payment callback handler
+export const cashfreeCallback = async (
+  req,
+  res
+) => {
+  try {
+    // Get parameters from either query params (GET) or request body (POST)
+    const order_id =
+      req.method === "GET" ? req.query.order_id : req.body.order_id;
+    const payment_status =
+      req.method === "GET" ? req.query.payment_status : req.body.payment_status;
+    const payment_amount =
+      req.method === "GET" ? req.query.payment_amount : req.body.payment_amount;
+    const payment_currency =
+      req.method === "GET"
+        ? req.query.payment_currency
+        : req.body.payment_currency;
+    const transaction_id =
+      req.method === "GET" ? req.query.transaction_id : req.body.transaction_id;
+
+    // Return a placeholder response for now
+    return res.status(statusCodes.SUCCESS).json({
+      message: "Callback processed successfully",
+      data: {
+        order_id,
+        payment_status,
+        payment_amount,
+        payment_currency,
+        transaction_id,
+      },
+    });
+  } catch (error) {
+    logger.error(
+      `Error processing Cashfree callback: ${error instanceof Error ? error.message : error
+      }`
+    );
+    return res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      message: getMessage("error.internalServerError"),
+    });
+  }
+};
+
 
 function generateUuid() {
   return uuidv4();

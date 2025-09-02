@@ -5,7 +5,8 @@ const {
     getSlotsByDoctorIdAndDateForWhatsapp,
     booking,
     createWhatsappAppointment,
-    CashfreePaymentLinkDetails
+    CashfreePaymentLinkDetails,
+    cashfreeCallback
 } = require('../controllers/whatsappController');
 
 
@@ -14,7 +15,9 @@ const {
 router.get('/getSlotsByDoctorIdAndDateForWhatsapp', getSlotsByDoctorIdAndDateForWhatsapp);
 router.post('/booking', booking);
 router.post('/createWhatsappAppointment', createWhatsappAppointment);
-router.post('/CashfreePaymentLinkDetails', CashfreePaymentLinkDetails);
+router.post('/CashfreePaymentLinkDetails', CashfreePaymentLinkDetails);// Handle both GET and POST requests for the callback URL
+router.get('/cashfreecallback', cashfreeCallback);
+router.post('/cashfreecallback', cashfreeCallback);
 
 
 module.exports = router;
