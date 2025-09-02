@@ -1,31 +1,44 @@
-import DoctorSlotModel from '../models/doctorSlotsModel.js';
-import doctorSlotSchema from '../schemas/doctorSlotsSchema.js';
-import generateSlots from '../utils/generateTimeSlots.js';
-import { sortSlotsByTime } from '../utils/utils.js';
-import Joi from 'joi';
-import axios from 'axios';
+import DoctorSlotModel from "../models/doctorSlotsModel.js";
+import doctorSlotSchema from "../schemas/doctorSlotsSchema.js";
+import generateSlots from "../utils/generateTimeSlots.js";
+import { sortSlotsByTime } from "../utils/utils.js";
+import Joi from "joi";
+import axios from "axios";
 
 // If you use Buffer, import it from 'buffer'
-import { Buffer } from 'buffer';
+import { Buffer } from "buffer";
 
-import { v4 as uuidv4 } from 'uuid';
-import e from 'express';
-import { error } from 'console';
-
-
-
+import { v4 as uuidv4 } from "uuid";
+import e from "express";
+import { error } from "console";
+import wtspAppointmentSchema from "../schemas/wtspAppointmentSchema.js";
+import appointmentsModel from "../models/appointmentsModel.js";
+import { SEQUENCE_PREFIX } from "../utils/constants.js";
+import sequenceSchema from "../sequence/sequenceSchema.js";
+import appointmentModel from "../models/appointmentsModel.js";
+import { PLATFORM_FEE } from "../utils/fees.js";
+import moment from "moment-timezone";
+import {
+  createPayment,
+  createWhatsAppPayment,
+  updateWhatsAppPaymentStatus,
+} from "../services/paymentService.js";
 
 // Duplicate API for WhatsApp integration
 export const getSlotsByDoctorIdAndDateForWhatsapp = async (req, res) => {
   const { doctorId, date, addressId } = req.query;
   if (!doctorId || !date || !addressId) {
     return res.status(400).json({
-      status: 'fail',
-      message: 'doctorId, date, and addressId are required',
+      status: "fail",
+      message: "doctorId, date, and addressId are required",
     });
   }
   const slotDate = new Date(date);
-  const slots = await DoctorSlotModel.findOne({ doctorId, addressId, date: slotDate });
+  const slots = await DoctorSlotModel.findOne({
+    doctorId,
+    addressId,
+    date: slotDate,
+  });
   if (slots && Array.isArray(slots.slots)) {
     // Only keep slots with status 'available' and time greater than now if date is today
     const now = new Date();
@@ -34,11 +47,11 @@ export const getSlotsByDoctorIdAndDateForWhatsapp = async (req, res) => {
       slotDate.getMonth() === now.getMonth() &&
       slotDate.getDate() === now.getDate();
 
-    slots.slots = slots.slots.filter(slot => {
-      if (slot.status !== 'available') return false;
+    slots.slots = slots.slots.filter((slot) => {
+      if (slot.status !== "available") return false;
       if (isToday) {
         // slot.time is assumed to be in "HH:mm" format
-        const [slotHour, slotMinute] = slot.time.split(':').map(Number);
+        const [slotHour, slotMinute] = slot.time.split(":").map(Number);
         const slotDateTime = new Date(slotDate);
         slotDateTime.setHours(slotHour, slotMinute, 0, 0);
         return slotDateTime > now;
@@ -48,27 +61,21 @@ export const getSlotsByDoctorIdAndDateForWhatsapp = async (req, res) => {
   }
   if (!slots) {
     return res.status(404).json({
-      status: 'fail',
-      message: 'No slots found for this doctor on the specified date',
+      status: "fail",
+      message: "No slots found for this doctor on the specified date",
     });
   }
-  return res.status(200).json({ status: 'success', data: slots });
+  return res.status(200).json({ status: "success", data: slots });
 };
 
-const AIRTEL_API_URL = "https://iqwhatsapp.airtel.in/gateway/airtel-xchange/basic/whatsapp-manager/v1/session/send/text"
+const AIRTEL_API_URL =
+  "https://iqwhatsapp.airtel.in/gateway/airtel-xchange/basic/whatsapp-manager/v1/session/send/text";
 
-const FROM_NUMBER = 919666955501
+const FROM_NUMBER = 919666955501;
 const AIRTEL_TOKEN = 'T7W9&w3396Y"';
-
-
-
 
 // 🔄 Webhook to receive incoming messages from Airtel
 const sessions = {};
-
-
-
-
 
 const vydhyobot = async (body) => {
   const { sourceAddress: from, messageParameters } = body;
@@ -100,15 +107,15 @@ const vydhyobot = async (body) => {
       slot: undefined,
       stage: undefined,
       cart: [],
-      selectedDate: undefined
+      selectedDate: undefined,
     };
   }
   const vydhyoSession = sessions[from];
-  let reply = '';
+  let reply = "";
 
   // 1. City selection
   // Always allow "hi" to restart the session
-  if (text.toLowerCase() === 'hi') {
+  if (text.toLowerCase() === "hi") {
     // Reset session
     sessions[from] = {
       items: [],
@@ -131,16 +138,22 @@ const vydhyobot = async (body) => {
       date: undefined,
       slots: [],
       slot: undefined,
-      stage: 'city_selection',
+      stage: "city_selection",
       cart: [],
-      selectedDate: undefined
+      selectedDate: undefined,
     };
     const vydhyoSession = sessions[from];
     try {
-      const { data } = await axios.get('https://server.vydhyo.com/whatsapp/cities');
+      const { data } = await axios.get(
+        "https://server.vydhyo.com/whatsapp/cities"
+      );
       vydhyoSession.cities = Array.isArray(data?.data) ? data.data : [];
       if ((vydhyoSession.cities ?? []).length > 0) {
-        reply = `👋 Welcome to Vydhyo! Please select your city:\n${(vydhyoSession.cities ?? []).map((city, i) => `${i + 1}) ${city}`).join('\n')}`;
+        reply = `👋 Welcome to Vydhyo! Please select your city:\n${(
+          vydhyoSession.cities ?? []
+        )
+          .map((city, i) => `${i + 1}) ${city}`)
+          .join("\n")}`;
       } else {
         reply = `❌ No cities found. Please try again later.`;
       }
@@ -148,15 +161,29 @@ const vydhyobot = async (body) => {
       reply = `❌ No cities found. Please try again later.`;
     }
   } else if (!vydhyoSession.city) {
-    if (vydhyoSession.cities && Number(text) >= 1 && Number(text) <= vydhyoSession.cities.length) {
+    if (
+      vydhyoSession.cities &&
+      Number(text) >= 1 &&
+      Number(text) <= vydhyoSession.cities.length
+    ) {
       vydhyoSession.city = vydhyoSession.cities[Number(text) - 1];
-      vydhyoSession.stage = 'specialization_selection';
+      vydhyoSession.stage = "specialization_selection";
       // Get specializations for city
       try {
-        const { data } = await axios.get(`https://server.vydhyo.com/whatsapp/specializations`);
-        vydhyoSession.specializations = Array.isArray(data?.data) ? data.data : [];
+        const { data } = await axios.get(
+          `https://server.vydhyo.com/whatsapp/specializations`
+        );
+        vydhyoSession.specializations = Array.isArray(data?.data)
+          ? data.data
+          : [];
         if ((vydhyoSession.specializations ?? []).length > 0) {
-          reply = `You selected ${vydhyoSession.city}. Please select a specialization:\n${(vydhyoSession.specializations ?? []).map((s, i) => `${i + 1}) ${s}`).join('\n')}`;
+          reply = `You selected ${
+            vydhyoSession.city
+          }. Please select a specialization:\n${(
+            vydhyoSession.specializations ?? []
+          )
+            .map((s, i) => `${i + 1}) ${s}`)
+            .join("\n")}`;
         } else {
           reply = `❌ No specializations found`;
         }
@@ -169,15 +196,28 @@ const vydhyobot = async (body) => {
   }
   // 2. Specialization selection
   else if (!vydhyoSession.specialization) {
-    if (vydhyoSession.specializations && Number(text) >= 1 && Number(text) <= vydhyoSession.specializations.length) {
-      vydhyoSession.specialization = vydhyoSession.specializations[Number(text) - 1];
-      vydhyoSession.stage = 'doctor_selection';
+    if (
+      vydhyoSession.specializations &&
+      Number(text) >= 1 &&
+      Number(text) <= vydhyoSession.specializations.length
+    ) {
+      vydhyoSession.specialization =
+        vydhyoSession.specializations[Number(text) - 1];
+      vydhyoSession.stage = "doctor_selection";
       // Get doctors for city & specialization
       try {
-        const { data } = await axios.get(`https://server.vydhyo.com/whatsapp/doctors-by-specialization-city?city=${encodeURIComponent(vydhyoSession.city)}&specialization=${encodeURIComponent(vydhyoSession.specialization)}`);
+        const { data } = await axios.get(
+          `https://server.vydhyo.com/whatsapp/doctors-by-specialization-city?city=${encodeURIComponent(
+            vydhyoSession.city
+          )}&specialization=${encodeURIComponent(vydhyoSession.specialization)}`
+        );
         vydhyoSession.doctors = Array.isArray(data?.data) ? data.data : [];
         if ((vydhyoSession.doctors ?? []).length > 0) {
-          reply = `You selected ${vydhyoSession.specialization}. Please select a doctor:\n${(vydhyoSession.doctors ?? []).map((d, i) => `${i + 1}) ${d.firstname} ${d.lastname}`).join('\n')}`;
+          reply = `You selected ${
+            vydhyoSession.specialization
+          }. Please select a doctor:\n${(vydhyoSession.doctors ?? [])
+            .map((d, i) => `${i + 1}) ${d.firstname} ${d.lastname}`)
+            .join("\n")}`;
         } else {
           reply = `❌ No doctors found for ${vydhyoSession.specialization} in ${vydhyoSession.city}.`;
         }
@@ -185,21 +225,35 @@ const vydhyobot = async (body) => {
         reply = `❌ No doctors found. Please try again later.`;
       }
     } else {
-      reply = `❓ I didn't understand that. Please select a valid specialization number:\n${vydhyoSession.specializations?.map((s, i) => `${i + 1}) ${s}`).join('\n')}`;
+      reply = `❓ I didn't understand that. Please select a valid specialization number:\n${vydhyoSession.specializations
+        ?.map((s, i) => `${i + 1}) ${s}`)
+        .join("\n")}`;
     }
   }
   // 3. Doctor selection
   else if (!vydhyoSession.doctor) {
-    if (vydhyoSession.doctors && Number(text) >= 1 && Number(text) <= vydhyoSession.doctors.length) {
+    if (
+      vydhyoSession.doctors &&
+      Number(text) >= 1 &&
+      Number(text) <= vydhyoSession.doctors.length
+    ) {
       vydhyoSession.doctor = vydhyoSession.doctors[Number(text) - 1];
       vydhyoSession.doctorId = vydhyoSession.doctor.userId;
       // Get clinics for doctor & city
       try {
-        const { data } = await axios.get(`https://server.vydhyo.com/whatsapp/doctor-clinics?userId=${vydhyoSession.doctorId}&city=${encodeURIComponent(vydhyoSession.city)}`);
+        const { data } = await axios.get(
+          `https://server.vydhyo.com/whatsapp/doctor-clinics?userId=${
+            vydhyoSession.doctorId
+          }&city=${encodeURIComponent(vydhyoSession.city)}`
+        );
         vydhyoSession.clinics = Array.isArray(data?.data) ? data.data : [];
         if ((vydhyoSession.clinics ?? []).length > 0) {
-            reply = `You selected ${vydhyoSession.doctor.firstname} ${vydhyoSession.doctor.lastname}. Please select a clinic:\n${(vydhyoSession.clinics ?? []).map((c, i) => `${i + 1}) ${c.clinicName}`).join('\n')}`;
-          vydhyoSession.stage = 'clinic_selection';
+          reply = `You selected ${vydhyoSession.doctor.firstname} ${
+            vydhyoSession.doctor.lastname
+          }. Please select a clinic:\n${(vydhyoSession.clinics ?? [])
+            .map((c, i) => `${i + 1}) ${c.clinicName}`)
+            .join("\n")}`;
+          vydhyoSession.stage = "clinic_selection";
         } else {
           reply = `❌ No clinics found for ${vydhyoSession.doctor.firstname} ${vydhyoSession.doctor.lastname} in ${vydhyoSession.city}.`;
         }
@@ -207,12 +261,18 @@ const vydhyobot = async (body) => {
         reply = `❌ No clinics found. Please try again later.`;
       }
     } else {
-      reply = `❓ I didn't understand that. Please select a valid doctor number:\n${vydhyoSession.doctors?.map((d, i) => `${i + 1}) ${d.firstname} ${d.lastname}`).join('\n')}`;
+      reply = `❓ I didn't understand that. Please select a valid doctor number:\n${vydhyoSession.doctors
+        ?.map((d, i) => `${i + 1}) ${d.firstname} ${d.lastname}`)
+        .join("\n")}`;
     }
   }
   // 4. Clinic selection
   else if (!vydhyoSession.clinic) {
-    if (vydhyoSession.clinics && Number(text) >= 1 && Number(text) <= vydhyoSession.clinics.length) {
+    if (
+      vydhyoSession.clinics &&
+      Number(text) >= 1 &&
+      Number(text) <= vydhyoSession.clinics.length
+    ) {
       vydhyoSession.clinic = vydhyoSession.clinics[Number(text) - 1];
       vydhyoSession.addressId = vydhyoSession.clinic.addressId;
 
@@ -222,35 +282,57 @@ const vydhyobot = async (body) => {
         const d = new Date();
         d.setDate(d.getDate() + i);
         const yyyy = d.getFullYear();
-        const mm = String(d.getMonth() + 1).padStart(2, '0');
-        const dd = String(d.getDate()).padStart(2, '0');
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        const dd = String(d.getDate()).padStart(2, "0");
         dates.push({
           key: `${yyyy}-${mm}-${dd}`,
           display: `${dd}-${mm}-${yyyy}`,
         });
       }
-      vydhyoSession.dates = dates.map(date => date.key);
+      vydhyoSession.dates = dates.map((date) => date.key);
 
-      reply = `You selected clinic: ${vydhyoSession.clinic.clinicName}\nPlease select a date:\n${dates.map((date, i) => `${i + 1}) ${date.display}`).join('\n')}`;
-      vydhyoSession.stage = 'date_selection';
+      reply = `You selected clinic: ${
+        vydhyoSession.clinic.clinicName
+      }\nPlease select a date:\n${dates
+        .map((date, i) => `${i + 1}) ${date.display}`)
+        .join("\n")}`;
+      vydhyoSession.stage = "date_selection";
     } else {
-      reply = `❓ I didn't understand that. Please select a valid clinic number:\n${vydhyoSession.clinics?.map((c, i) => `${i + 1}) ${c.clinicName}`).join('\n')}`;
+      reply = `❓ I didn't understand that. Please select a valid clinic number:\n${vydhyoSession.clinics
+        ?.map((c, i) => `${i + 1}) ${c.clinicName}`)
+        .join("\n")}`;
     }
   }
   // 5. Date selection
   else if (!vydhyoSession.date) {
-    if (vydhyoSession.dates && Number(text) >= 1 && Number(text) <= vydhyoSession.dates.length) {
+    if (
+      vydhyoSession.dates &&
+      Number(text) >= 1 &&
+      Number(text) <= vydhyoSession.dates.length
+    ) {
       vydhyoSession.date = vydhyoSession.dates[Number(text) - 1];
       // Get slots for doctorId, addressId, date
       try {
-        const { data } = await axios.get(`https://server.vydhyo.com/whatsappbooking/getSlotsByDoctorIdAndDateForWhatsapp?doctorId=${vydhyoSession.doctorId}&addressId=${vydhyoSession.addressId}&date=${encodeURIComponent(vydhyoSession.date)}`);
+        const { data } = await axios.get(
+          `https://server.vydhyo.com/whatsappbooking/getSlotsByDoctorIdAndDateForWhatsapp?doctorId=${
+            vydhyoSession.doctorId
+          }&addressId=${vydhyoSession.addressId}&date=${encodeURIComponent(
+            vydhyoSession.date
+          )}`
+        );
         // Only keep slots with status 'available' and map to their time
         vydhyoSession.slots = Array.isArray(data?.data?.slots)
-          ? data.data.slots.filter((slot) => slot.status === 'available').map((slot) => slot.time)
+          ? data.data.slots
+              .filter((slot) => slot.status === "available")
+              .map((slot) => slot.time)
           : [];
         if ((vydhyoSession.slots ?? []).length > 0) {
-          reply = `You selected ${vydhyoSession.date}. Please select a time slot:\n${(vydhyoSession.slots ?? []).map((s, i) => `${i + 1}) ${s}`).join('\n')}`;
-          vydhyoSession.stage = 'slot_selection';
+          reply = `You selected ${
+            vydhyoSession.date
+          }. Please select a time slot:\n${(vydhyoSession.slots ?? [])
+            .map((s, i) => `${i + 1}) ${s}`)
+            .join("\n")}`;
+          vydhyoSession.stage = "slot_selection";
         } else {
           reply = `❌ No slots available for this date.`;
         }
@@ -258,31 +340,39 @@ const vydhyobot = async (body) => {
         reply = `❌ No slots available. Please try again later.`;
       }
     } else {
-      reply = `❓ I didn't understand that. Please select a valid date number:\n${vydhyoSession.dates?.map((d, i) => `${i + 1}) ${d}`).join('\n')}`;
+      reply = `❓ I didn't understand that. Please select a valid date number:\n${vydhyoSession.dates
+        ?.map((d, i) => `${i + 1}) ${d}`)
+        .join("\n")}`;
     }
   }
   // 6. Slot selection
   else if (!vydhyoSession.slot) {
-    if (vydhyoSession.slots && Number(text) >= 1 && Number(text) <= vydhyoSession.slots.length) {
+    if (
+      vydhyoSession.slots &&
+      Number(text) >= 1 &&
+      Number(text) <= vydhyoSession.slots.length
+    ) {
       vydhyoSession.slot = vydhyoSession.slots[Number(text) - 1];
       reply = `You selected ${vydhyoSession.slot}. Confirm your appointment by replying 'Yes'.`;
-      vydhyoSession.stage = 'confirm';
+      vydhyoSession.stage = "confirm";
     } else {
-      reply = `❓ I didn't understand that. Please select a valid slot number:\n${vydhyoSession.slots?.map((s, i) => `${i + 1}) ${s}`).join('\n')}`;
+      reply = `❓ I didn't understand that. Please select a valid slot number:\n${vydhyoSession.slots
+        ?.map((s, i) => `${i + 1}) ${s}`)
+        .join("\n")}`;
     }
   }
   // 7. Confirmation
-  else if (vydhyoSession.stage === 'confirm' && text.toLowerCase() === 'yes') {
+  else if (vydhyoSession.stage === "confirm" && text.toLowerCase() === "yes") {
     // Confirm appointment (dummy API call)
     try {
-      await axios.post('https://server.vydhyo.com/whatsapp/book', {
+      await axios.post("https://server.vydhyo.com/whatsapp/book", {
         city: vydhyoSession.city,
         specialization: vydhyoSession.specialization,
         doctorId: vydhyoSession.doctorId,
         addressId: vydhyoSession.addressId,
         date: vydhyoSession.date,
         slot: vydhyoSession.slot,
-        user: from
+        user: from,
       });
       reply = `✅ Appointment confirmed!\n\nDetails:\nCity: ${vydhyoSession.city}\nSpecialization: ${vydhyoSession.specialization}\nDoctor: ${vydhyoSession.doctor.name}\nClinic: ${vydhyoSession.clinic.address}\nDate: ${vydhyoSession.date}\nSlot: ${vydhyoSession.slot}`;
       delete sessions[from];
@@ -296,13 +386,10 @@ const vydhyobot = async (body) => {
   try {
     await sendWhatsAppMessage(from, reply, FROM_NUMBER.toString(), null);
   } catch (error) {
-    console.error('❌ Error sending reply:', error.message);
+    console.error("❌ Error sending reply:", error.message);
   }
 };
-  // Your Vydhyobot implementation here
-
-
-
+// Your Vydhyobot implementation here
 
 export const sendWhatsAppMessage = async (
   to,
@@ -310,23 +397,23 @@ export const sendWhatsAppMessage = async (
   fromNumber,
   base64Image
 ) => {
-  const username = 'world_tek';
+  const username = "world_tek";
   const password = 'T7W9&w3396Y"'; // Store in environment variables in production
-  const auth = Buffer.from(`${username}:${password}`).toString('base64');
+  const auth = Buffer.from(`${username}:${password}`).toString("base64");
 
   const headers = {
     Authorization: `Basic ${auth}`,
-    'Content-Type': 'application/json',
+    "Content-Type": "application/json",
   };
 
   const textUrl =
-    'https://iqwhatsapp.airtel.in/gateway/airtel-xchange/basic/whatsapp-manager/v1/session/send/text';
+    "https://iqwhatsapp.airtel.in/gateway/airtel-xchange/basic/whatsapp-manager/v1/session/send/text";
 
   const uploadUrl =
-    'https://iqwhatsapp.airtel.in/gateway/airtel-xchange/basic/whatsapp-manager/v1/session/upload/media';
+    "https://iqwhatsapp.airtel.in/gateway/airtel-xchange/basic/whatsapp-manager/v1/session/upload/media";
 
   const mediaSendUrl =
-    'https://iqwhatsapp.airtel.in/gateway/airtel-xchange/basic/whatsapp-manager/v1/session/send/media';
+    "https://iqwhatsapp.airtel.in/gateway/airtel-xchange/basic/whatsapp-manager/v1/session/send/media";
 
   try {
     // 🔹 If no image, send as text message
@@ -336,7 +423,7 @@ export const sendWhatsAppMessage = async (
         to,
         from: fromNumber,
         message: {
-          type: 'text',
+          type: "text",
           text: reply,
         },
       };
@@ -347,15 +434,15 @@ export const sendWhatsAppMessage = async (
     }
 
     // 🔹 Clean base64 data (remove prefix if exists)
-    const cleanedBase64 = base64Image.replace(/^data:image\/\w+;base64,/, '');
+    const cleanedBase64 = base64Image.replace(/^data:image\/\w+;base64,/, "");
 
     // 🔹 Upload image to get mediaId
     const uploadPayload = {
       sessionId: generateUuid(),
-      type: 'image',
+      type: "image",
       attachment: {
         base64: cleanedBase64,
-        filename: 'qr-code.png',
+        filename: "qr-code.png",
       },
     };
 
@@ -363,7 +450,7 @@ export const sendWhatsAppMessage = async (
     const mediaId = uploadRes.data.mediaId;
 
     if (!mediaId) {
-      throw new Error('❌ Media upload failed. mediaId not returned.');
+      throw new Error("❌ Media upload failed. mediaId not returned.");
     }
 
     // 🔹 Send image message using mediaId
@@ -372,7 +459,7 @@ export const sendWhatsAppMessage = async (
       to,
       from: fromNumber,
       message: {
-        type: 'image',
+        type: "image",
         image: {
           id: mediaId,
           caption: reply,
@@ -383,30 +470,477 @@ export const sendWhatsAppMessage = async (
     const mediaRes = await axios.post(mediaSendUrl, mediaPayload, { headers });
     // console.log('✅ Image message sent:', mediaRes.data);
     return mediaRes.data;
-
   } catch (error) {
-    console.error('❌ Error sending WhatsApp message:', error.response?.data || error.message);
+    console.error(
+      "❌ Error sending WhatsApp message:",
+      error.response?.data || error.message
+    );
     throw error;
   }
 };
 
+async function bookSlot(req) {
+  const {
+    doctorId,
+    addressId,
+    appointmentDate,
+    appointmentTime,
+    appointmentId,
+  } = req.body;
+  if (
+    !doctorId ||
+    !addressId ||
+    !appointmentDate ||
+    !appointmentTime ||
+    !appointmentId
+  ) {
+    throw new Error(
+      "doctorId, addressId, appointmentDate, appointmentTime and appointmentId are required to book a slot"
+    );
+  }
+  const result = await DoctorSlotModel.updateOne(
+    {
+      doctorId,
+      addressId,
+      date: appointmentDate,
+    },
+    {
+      $set: {
+        "slots.$[elem].status": "booked",
+        "slots.$[elem].appointmentId": appointmentId,
+        "slots.$[elem].updatedBy": req.headers.userid,
+        "slots.$[elem].updatedAt": new Date(),
+      },
+    },
+    {
+      arrayFilters: [
+        {
+          "elem.time": appointmentTime,
+          "elem.status": "available",
+        },
+      ],
+    }
+  );
+  return result;
+}
+
+const createPaymentLink = async (payment) => {
+  try {
+    // Cashfree API credentials
+    const CASHFREE_APP_ID = process.env.pgAppID;
+    const CASHFREE_SECRET_KEY = process.env.pgSecreteKey;
+    const CASHFREE_BASE_URL =
+      process.env.CASHFREE_BASE_URL || "https://sandbox.cashfree.com/pg";
+
+    // Payload for Cashfree Link API
+    const payload = {
+      link_id: payment.linkId,
+      link_amount: payment.totalAmount,
+      link_currency: payment.currency,
+      customer_details: {
+        customer_name: `${payment.name}`,
+        customer_email: payment.email,
+        customer_phone: payment.mobile,
+      },
+      link_meta: {
+        return_url: `${process.env.APPLICATION_URL}/paymentResponse?link_id=${payment.linkId}`,
+        notify_url: `${process.env.BASE_URL}/api/order/cashfreecallback`,
+      },
+      link_notify: {
+        send_sms: false,
+        send_email: false,
+        payment_received: false,
+      },
+      link_payment_methods: ["upi"], // UPI only
+      link_purpose: "Payment",
+    };
+
+    // API request to Cashfree
+    const response = await axios.post(`${CASHFREE_BASE_URL}/links`, payload, {
+      headers: {
+        "Content-Type": "application/json",
+        "x-client-id": CASHFREE_APP_ID,
+        "x-client-secret": CASHFREE_SECRET_KEY,
+        "x-api-version": "2023-08-01",
+      },
+    });
+
+    if (response.status === 200 && response.data?.link_url) {
+      console.log("Cashfree link response:", response.data);
+      return response.data.link_url; // ✅ return actual link
+    } else {
+      console.error("Error creating payment link:", response.data);
+      return null;
+    }
+  } catch (error) {
+    console.error("Error creating payment link:", error);
+    return null;
+  }
+};
+
+export const createWhatsappAppointment = async (req, res) => {
+  try {
+    // Step 1: Validate Input
+    const { error } = wtspAppointmentSchema.validate(req.body);
+    if (error) {
+      return res.status(400).json({
+        status: "fail",
+        message: error.details[0].message,
+      });
+    }
+
+    // Step 2: Check appointment time validity
+    const appointmentDateTime = moment.tz(
+      `${req.body.appointmentDate} ${req.body.appointmentTime}`,
+      "YYYY-MM-DD HH:mm",
+      "Asia/Kolkata"
+    );
+    const now = moment.tz("Asia/Kolkata");
+
+    if (appointmentDateTime.isBefore(now)) {
+      return res.status(208).json({
+        status: "fail",
+        message: "Appointment date & time must not be in the past.",
+      });
+    }
+
+    // Step 3: Check if slot is already booked
+    const checkSlotAvailable = await appointmentsModel.find({
+      doctorId: req.body.doctorId,
+      appointmentDate: new Date(req.body.appointmentDate),
+      appointmentTime: req.body.appointmentTime,
+      appointmentStatus: { $in: ["pending", "scheduled"] },
+    });
+    // const checkSlotAvailability = await findSlotByDateTime(req.body.doctorId, req.body.appointmentDate, req.body.appointmentTime);
+
+    if (checkSlotAvailable.length > 0) {
+      return res.status(208).json({
+        status: "fail",
+        message: "Slot already booked or unavailable for this date and time",
+      });
+    }
+
+    // step 3.1 check this mobile from body user available or not
+    const mobile = req.body.mobile;
+    const email = req.body.email || "example@example.com";
+    // Extract first and last name from patientName
+    let firstname = "";
+    let lastname = "";
+
+    if (req.body.patientName) {
+      // Trim, split by spaces, and remove empty strings
+      const parts = req.body.patientName.trim().split(/\s+/);
+
+      firstname = parts[0] || "";
+      lastname = parts.length > 1 ? parts.slice(1).join(" ") : "";
+    }
+
+    const payload = {
+      mobile: mobile,
+      userType: "patient",
+      status: "active",
+      firstname: firstname,
+      lastname: lastname,
+      userFrom: "whatsapp",
+    };
+
+    // check user is avaiable or not if no create user
+    const userResponse = await axios.post(
+      `${process.env.AUTH_SERVICE_URL}/auth/whatsappuser`,
+      payload,
+      {
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+    console.log("userResponse", userResponse?.data?.user);
+
+    if (!userResponse?.data?.user || !userResponse?.data?.user?._id) {
+      return res.status(500).json({
+        status: "fail",
+        message: "Something Went Wrong! Please try again later.",
+      });
+    }
+
+    const userid = userResponse.data.user.userId;
+
+    // Step 4: Generate appointmentId first (before calling payment API)
+    const appointmentCounter = await sequenceSchema.findByIdAndUpdate(
+      { _id: SEQUENCE_PREFIX.APPOINTMENTS_SEQUENCE.APPOINTMENTS_MODEL },
+      { $inc: { seq: 1 } },
+      { new: true, upsert: true }
+    );
+
+    // Step 5: Create appointment
+    const appointmentId = SEQUENCE_PREFIX.APPOINTMENTS_SEQUENCE.SEQUENCE.concat(
+      appointmentCounter.seq
+    );
+
+    req.body.appointmentId = appointmentId;
+    req.body.createdBy = userid || null;
+    req.body.updatedBy = userid || null;
+    req.body.userId = userid;
+
+    // step 5.1: Check if the doctor has slots available for the appointment date and time
+    const bookingResult = await bookSlot(req);
+    if (!bookingResult || bookingResult.modifiedCount === 0) {
+      return res.status(404).json({
+        status: "fail",
+        message:
+          "Slot already booked or slots do not exist check in slot availability.",
+      });
+    }
+
+    const linkId = `live_${day}${month}${year}_${appointmentId}`;
+    req.body.linkId = linkId;
+
+    const appointment = await appointmentModel.create(req.body);
+
+    // Generate unique linkId
+    const currentDate = new Date();
+    const day = String(currentDate.getDate()).padStart(2, "0");
+    const month = String(currentDate.getMonth() + 1).padStart(2, "0");
+    const year = currentDate.getFullYear();
+
+    // Create the order
+    const payment = {
+      linkId: linkId,
+      totalAmount: req.body.amount,
+      currency: "INR",
+      name: req.body.patientName,
+      mobile: mobile,
+      email: email || "example@example.com",
+    };
+
+    const paymentLink = await createPaymentLink(payment);
+
+    //if we get paymentLink then create a payment intiated
+    let paymentResponse;
+    if (paymentLink) {
+      paymentResponse = await createWhatsAppPayment({
+        userId: userid,
+        doctorId: req.body.doctorId,
+        addressId: req.body.addressId,
+        appointmentId: req.body.appointmentId,
+        actualAmount: req.body.amount,
+        discount: req.body.discount || 0,
+        discountType: req.body.discountType,
+        finalAmount: req.body.finalAmount,
+        paymentStatus: "pending",
+        paymentFrom: "appointment",
+        appSource: "whatsapp",
+        linkId: linkId,
+      });
+    }
+
+    return res.status(200).json({
+      status: "success",
+      message: "Appointment created successfully",
+      data: {
+        appointmentDetails: appointment,
+        appointmentId: req.body.appointmentId,
+        platformfee: PLATFORM_FEE,
+        paymentLink,
+        paymentResponse: paymentResponse,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: "Error creating appointment",
+      error: error.message,
+    });
+  }
+};
 
 
 export const booking = async (req, res) => {
-  
-// Check if msgStatus is RECEIVED
-  if (req.body.msgStatus !== 'RECEIVED') {
+  // Check if msgStatus is RECEIVED
+  if (req.body.msgStatus !== "RECEIVED") {
     // console.log('Ignoring webhook request as msgStatus is not RECEIVED.');
-    return res.status(200).json({ message: 'Webhook ignored.' });
+    return res.status(200).json({ message: "Webhook ignored." });
   }
 
- await vydhyobot(req.body);
+  await vydhyobot(req.body);
 
   return res.status(200).json({
-    status: 'success',
-    message: 'Booking done',
+    status: "success",
+    message: "Booking done",
   });
 };
+
+
+// ✅ Cancel doctor slot
+async function cancelSlot(appointment, userid) {
+  const {
+    appointmentId,
+    doctorId,
+    addressId,
+    appointmentDate,
+    appointmentTime,
+  } = appointment;
+
+  if (
+    !appointmentId ||
+    !doctorId ||
+    !addressId ||
+    !appointmentDate ||
+    !appointmentTime
+  ) {
+    throw new Error(
+      "appointmentId, doctorId, addressId, appointmentDate, appointmentTime are required to cancel a slot"
+    );
+  }
+
+  const result = await DoctorSlotModel.updateOne(
+    {
+      doctorId,
+      addressId,
+      date: appointmentDate,
+    },
+    {
+      $set: {
+        "slots.$[elem].status": "available",
+        "slots.$[elem].appointmentId": null,
+        "slots.$[elem].updatedBy": userid,
+        "slots.$[elem].updatedAt": new Date(),
+      },
+    },
+    {
+      arrayFilters: [
+        {
+          "elem.appointmentId": appointmentId,
+          "elem.time": appointmentTime,
+          "elem.status": { $in: ["booked", "pending", "unavailable"] },
+        },
+      ],
+    }
+  );
+
+  console.log("cancelSlot result:", result);
+
+  if (result.modifiedCount === 0) {
+    console.warn(
+      `No slot updated for appointmentId=${appointmentId}, doctorId=${doctorId}, time=${appointmentTime}`
+    );
+  }
+
+  return result;
+}
+
+// ✅ Release doctor slot and cancel appointment
+const releaseDoctorSlot = async (appointment, reason, userid) => {
+  if (!appointment?.doctorId || !appointment?.appointmentId) {
+    throw new Error("doctorId and appointmentId are required");
+  }
+
+  try {
+    await cancelSlot(appointment, userid);
+
+    const updateAppointment = await appointmentModel.findOneAndUpdate(
+      { appointmentId: appointment.appointmentId },
+      {
+        $set: {
+          appointmentStatus: "cancelled",
+          cancellationReason: reason,
+          updatedBy: userid,
+          updatedAt: new Date(),
+        },
+      },
+      { new: true }
+    );
+
+    if (!updateAppointment) {
+      throw new Error(
+        `Failed to update appointment status for ${appointment.appointmentId}`
+      );
+    }
+
+    return { status: "success", message: "Slot released successfully" };
+  } catch (err) {
+    console.error("Error in releaseDoctorSlot:", err);
+    throw err;
+  }
+};
+
+// ✅ Payment link details and appointment update
+export const CashfreePaymentLinkDetails = async (req, res) => {
+  try {
+    const { linkId } = req.body;
+    if (!linkId) {
+      return res.status(400).json({
+        message: "linkId is required to fetch payment details.",
+      });
+    }
+
+    const CASHFREE_APP_ID = process.env.pgAppID;
+    const CASHFREE_SECRET_KEY = process.env.pgSecreteKey;
+    const CASHFREE_BASE_URL =
+      process.env.CASHFREE_BASE_URL || "https://sandbox.cashfree.com/pg";
+
+    const response = await axios.get(`${CASHFREE_BASE_URL}/links/${linkId}`, {
+      headers: {
+        "Content-Type": "application/json",
+        "x-client-id": CASHFREE_APP_ID,
+        "x-client-secret": CASHFREE_SECRET_KEY,
+        "x-api-version": "2023-08-01",
+      },
+    });
+
+    if (response.status === 200 && response.data) {
+      const paymentDetails = response.data;
+
+      if (paymentDetails.link_status === "PAID") {
+        const paymentResponse = await updateWhatsAppPaymentStatus({
+          linkId,
+          status: "paid",
+        });
+
+        const appointmentId = paymentResponse?.data?.appointmentId;
+        if (appointmentId) {
+          await appointmentModel.findOneAndUpdate(
+            { appointmentId },
+            { appointmentStatus: "scheduled", updatedAt: new Date() },
+            { new: true }
+          );
+        }
+      }
+
+      return res.status(200).json({
+        message: "Payment details updated successfully.",
+        data: {
+          cashfreeDetails: paymentDetails,
+        },
+      });
+    } else {
+      // ❌ Payment not successful → cancel slot and appointment
+      const paymentResponse = await updateWhatsAppPaymentStatus({
+        linkId,
+        status: "cancelled",
+      });
+
+      const appointmentId = paymentResponse?.data?.appointmentId;
+      const appointmentData = await appointmentModel.findOne({ appointmentId });
+
+      if (appointmentData) {
+        const userid = appointmentData.userId;
+        const reason = "Payment failed";
+        await releaseDoctorSlot(appointmentData, reason, userid);
+      }
+
+      return res.status(400).json({
+        message: "Failed to fetch payment details from Cashfree.",
+        error: response.data,
+      });
+    }
+  } catch (error) {
+    console.error("Error fetching or updating payment details from Cashfree:", error);
+    return res.status(500).json({
+      message:
+        "An error occurred while fetching or updating payment details from Cashfree.",
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+};
+
 
 function generateUuid() {
   return uuidv4();

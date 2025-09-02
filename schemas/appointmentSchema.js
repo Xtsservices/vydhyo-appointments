@@ -35,7 +35,7 @@ paymentMethod: Joi.string().allow(null, "").optional(),
     .optional(),
 
   homeAddress: Joi.string().allow(null, "").optional(),
-
+mobile: Joi.string().allow(null, "").optional(),
 });
 
 module.exports = appointmentSchema;
