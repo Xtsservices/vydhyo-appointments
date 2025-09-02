@@ -521,7 +521,7 @@ async function bookSlot(req) {
       ],
     }
   );
-  console.log("result",result)
+  console.log("result", result);
   return result;
 }
 
@@ -665,7 +665,6 @@ export const createWhatsappAppointment = async (req, res) => {
     const userid = userResponse.data.user.userId;
     console.log("userResponseuserid", userid);
 
-
     // Step 4: Generate appointmentId first (before calling payment API)
     const appointmentCounter = await sequenceSchema.findByIdAndUpdate(
       { _id: SEQUENCE_PREFIX.APPOINTMENTS_SEQUENCE.APPOINTMENTS_MODEL },
@@ -687,7 +686,7 @@ export const createWhatsappAppointment = async (req, res) => {
 
     // step 5.1: Check if the doctor has slots available for the appointment date and time
     const bookingResult = await bookSlot(req);
-    console.log("bookingResult",bookingResult)
+    console.log("bookingResult", bookingResult);
     if (!bookingResult || bookingResult.modifiedCount === 0) {
       return res.status(404).json({
         status: "fail",
@@ -696,7 +695,7 @@ export const createWhatsappAppointment = async (req, res) => {
       });
     }
 
-     // Generate unique linkId
+    // Generate unique linkId
     const currentDate = new Date();
     const day = String(currentDate.getDate()).padStart(2, "0");
     const month = String(currentDate.getMonth() + 1).padStart(2, "0");
@@ -705,13 +704,12 @@ export const createWhatsappAppointment = async (req, res) => {
     const linkId = `live_${day}${month}${year}_${appointmentId}`;
     req.body.linkId = linkId;
 
-    console.log("before appointment creation",linkId);
+    console.log("before appointment creation", linkId);
 
     const appointment = await appointmentModel.create(req.body);
 
-   
     // Create the order
-    
+
     const payment = {
       linkId: linkId,
       totalAmount: req.body.amount,
@@ -740,8 +738,9 @@ export const createWhatsappAppointment = async (req, res) => {
         paymentStatus: "pending",
         paymentFrom: "appointment",
         appSource: "whatsapp",
-        paymentMethod:"upi",
+        paymentMethod: "upi",
         linkId: linkId,
+        platformfee: PLATFORM_FEE,
       });
     }
 
@@ -764,7 +763,6 @@ export const createWhatsappAppointment = async (req, res) => {
   }
 };
 
-
 export const booking = async (req, res) => {
   // Check if msgStatus is RECEIVED
   if (req.body.msgStatus !== "RECEIVED") {
@@ -779,7 +777,6 @@ export const booking = async (req, res) => {
     message: "Booking done",
   });
 };
-
 
 // ✅ Cancel doctor slot
 async function cancelSlot(appointment, userid) {
@@ -877,7 +874,7 @@ const releaseDoctorSlot = async (appointment, reason, userid) => {
 // ✅ Payment link details and appointment update
 export const CashfreePaymentLinkDetails = async (req, res) => {
   try {
-    console.log(req.body,"req.body");
+    console.log(req.body, "req.body");
     const { linkId } = req.body;
     console.log("linkId", linkId);
     if (!linkId) {
@@ -899,7 +896,7 @@ export const CashfreePaymentLinkDetails = async (req, res) => {
         "x-api-version": "2023-08-01",
       },
     });
-console.log("cashfreepaymentresponse",response.data)
+    console.log("cashfreepaymentresponse", response.data);
     if (response.status === 200 && response.data) {
       const paymentDetails = response.data;
 
@@ -920,26 +917,27 @@ console.log("cashfreepaymentresponse",response.data)
             { new: true }
           );
         }
-      }else {
-      // ❌ Payment not successful → cancel slot and appointment
-      const paymentResponse = await updateWhatsAppPaymentStatus({
-        linkId,
-        status: "cancelled",
-      });
+      } else {
+        // ❌ Payment not successful → cancel slot and appointment
+        const paymentResponse = await updateWhatsAppPaymentStatus({
+          linkId,
+          status: "cancelled",
+        });
 
-      console.log("paymentResponsefail", paymentResponse);
+        console.log("paymentResponsefail", paymentResponse);
 
-      const appointmentId = paymentResponse?.data?.appointmentId;
-      const appointmentData = await appointmentModel.findOne({ appointmentId });
-      console.log("appointmentIdfail", appointmentId);
+        const appointmentId = paymentResponse?.data?.appointmentId;
+        const appointmentData = await appointmentModel.findOne({
+          appointmentId,
+        });
+        console.log("appointmentIdfail", appointmentId);
 
-      if (appointmentData) {
-        const userid = appointmentData.userId;
-        const reason = "Payment failed";
-        await releaseDoctorSlot(appointmentData, reason, userid);
+        if (appointmentData) {
+          const userid = appointmentData.userId;
+          const reason = "Payment failed";
+          await releaseDoctorSlot(appointmentData, reason, userid);
+        }
       }
-
-    }
 
       return res.status(200).json({
         message: "Payment details updated successfully.",
@@ -972,7 +970,10 @@ console.log("cashfreepaymentresponse",response.data)
       });
     }
   } catch (error) {
-    console.error("Error fetching or updating payment details from Cashfree:", error);
+    console.error(
+      "Error fetching or updating payment details from Cashfree:",
+      error
+    );
     return res.status(500).json({
       message:
         "An error occurred while fetching or updating payment details from Cashfree.",
@@ -980,7 +981,6 @@ console.log("cashfreepaymentresponse",response.data)
     });
   }
 };
-
 
 function generateUuid() {
   return uuidv4();
