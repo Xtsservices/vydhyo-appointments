@@ -740,7 +740,7 @@ export const createWhatsappAppointment = async (req, res) => {
         appSource: "whatsapp",
         paymentMethod: "upi",
         linkId: linkId,
-        platformfee: PLATFORM_FEE,
+        platformFee: PLATFORM_FEE,
       });
     }
 
