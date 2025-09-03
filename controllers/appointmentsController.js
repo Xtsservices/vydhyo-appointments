@@ -4,7 +4,7 @@ const sequenceSchema = require("../sequence/sequenceSchema");
 const appointmentSchema = require("../schemas/appointmentSchema");
 const DoctorSlotModel = require("../models/doctorSlotsModel");
 const { SEQUENCE_PREFIX } = require("../utils/constants");
-const { getUserDetailsBatch } = require("../services/userService");
+const { getUserDetailsBatch, getUsersByIds } = require("../services/userService");
 const {
   createPayment,
   getAppointmentPayments,
@@ -1757,34 +1757,22 @@ exports.rescheduleAppointment = async (req, res) => {
     
       // ✅ SMS to Patient: Sends an SMS notification to the patient’s registered mobile number
 
-    let doctorName = "Doctor";
-    let patientMobile = null;
-  const templateid = "1707175447494195093"; 
+    
+  const templateid = process.env.APPOINTMENT_RESCHEDULE_TEMPLATE_ID || "1707175447494195093"; 
 
-    try {
-      const userResp = await axios.post(
-        "http://localhost:4002/users/getUsersByIds",
-        { userIds: [appointment.doctorId, appointment.userId] },
-        { headers: { "Content-Type": "application/json" } }
-      );
+  const userIds = [appointment.doctorId, appointment.userId];
+const users = await getUsersByIds(userIds);
 
-      if (userResp?.data?.users?.length > 0) {
-        userResp.data.users.forEach(u => {
-          if (u.userId === appointment.doctorId) {
-            doctorName = `${u.firstname || ""} ${u.lastname || ""}`.trim();
-          }
-          if (u.userId === appointment.userId) {
-            patientMobile = u.mobile; // ✅ Patient mobile for SMS
-          }
-        });
-      }
-    } catch (err) {
-      console.error("Error fetching user details:", err.message);
-    }
+const doctor = users[appointment.doctorId];
+const patient = users[appointment.userId];
+
+const doctorName = `${doctor?.firstname || ""} ${doctor?.lastname || ""}`.trim();
+const patientMobile = patient?.mobile;
+
     if (patientMobile) {
   const formattedDate = moment(newDate).format("DD-MM-YYYY");
   const rescheduleMsg = `Your appointment with Dr. ${doctorName} has been rescheduled to ${formattedDate} at ${newTime}. Thank you for using VYDHYO.`;
-
+console.log("Reschedule SMS:", rescheduleMsg, patientMobile);
   try {
     await sendOTPSMS(patientMobile, rescheduleMsg,  templateid, "Dear {#var#} {#var#}");
   } catch (error) {

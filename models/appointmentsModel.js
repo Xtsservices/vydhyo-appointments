@@ -115,7 +115,11 @@ const appointmentSchema = new mongoose.Schema({
 	homeAddress: {
 		type: String,
 		default: null
-	}
+	},
+	reminderSent: {
+    type: Boolean,
+    default: false,
+  }
 	
 });
 

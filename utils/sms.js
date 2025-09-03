@@ -6,7 +6,7 @@ const sendSMS = async (params) => {
 
     // Trigger the API using axios
     const response = await axios.get(url, { params });
-
+console.log("SMS API response:", response.data);
     return response.data; // Return the API response
   } catch (error) {
     console.error("Error sending SMS:", error);
@@ -38,6 +38,7 @@ const sendOTPSMS = async (mobile, codeOrMessage, templateid) => {
       message: codeOrMessage,
       templateid: templateid,
     };
+    console.log("SMS params:", params);
     // Call the sendSMS function
     return await sendSMS(params);
   } catch (error) {
