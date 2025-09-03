@@ -673,12 +673,13 @@ console.log("Appointment created:", appointment);
       actualAmount: req.body.amount,
       discount: req.body.discount || 0,
       discountType: req.body.discountType,
-       finalAmount: req.body.finalAmount,
+       finalAmount: req.body.finalAmount || req.body.amount,
       paymentStatus: "paid",
       paymentFrom: "appointment",
       appSource: req.body.appSource,
     };
 console.log("paymentData", paymentData);
+
     if (req.body.appSource === "patientApp" && req.body.paymentMethod === "wallet") {
       try {
         const transactionData = {
