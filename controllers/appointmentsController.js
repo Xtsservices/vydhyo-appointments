@@ -875,14 +875,15 @@ console.log("Wallet transaction updated to approved:", update.data);
           error: err.message,
         });
       }
-    } else {
-      console.log("No payment processing required.");
-      // Handle cases where payment is not required or invalid
-      return res.status(400).json({
-        status: "fail",
-        message: "Invalid payment configuration",
-      });
-    }
+    } 
+    // else {
+    //   console.log("No payment processing required.");
+    //   // Handle cases where payment is not required or invalid
+    //   return res.status(400).json({
+    //     status: "fail",
+    //     message: "Invalid payment configuration",
+    //   });
+    // }
 
     return res.status(200).json({
       status: "success",
