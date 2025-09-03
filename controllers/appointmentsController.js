@@ -707,9 +707,11 @@ exports.createAppointment = async (req, res) => {
             message: `Wallet payment failed: ${transactionResponse.data?.message || "Unknown error"}`,
           });
         }
+         const refferalPaymentData = { ...paymentData };
+        delete refferalPaymentData.finalAmount;
         // Create payment record for wallet
         paymentResponse = await createPayment(req.headers.authorization, {
-          ...paymentData,
+          ...refferalPaymentData,
           paymentMethod: "wallet",
           platformFee: PLATFORM_FEE,
         });
@@ -777,9 +779,11 @@ exports.createAppointment = async (req, res) => {
       }
     } else if (req.body.appSource === "patientApp" && req.body.referralCode) {
       try {
+        const refferalPaymentData = { ...paymentData };
+        delete refferalPaymentData.finalAmount;
         // Create payment record for referral
         paymentResponse = await createPayment(req.headers.authorization, {
-          ...paymentData,
+          ...refferalPaymentData,
           paymentMethod: "free",
           platformFee: PLATFORM_FEE,
         });
