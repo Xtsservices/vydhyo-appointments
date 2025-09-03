@@ -897,6 +897,7 @@ console.log("Wallet transaction updated to approved:", update.data);
       },
     });
   } catch (error) {
+    console.log("Error details:", error);
     console.error("Error creating appointment:", error.message);
     return res.status(500).json({
       status: "fail",
