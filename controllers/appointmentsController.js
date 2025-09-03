@@ -790,13 +790,14 @@ console.log("Wallet transaction updated to approved:", update.data);
       }
     } else if (req.body.appSource === "patientApp" && req.body.referralCode) {
       try {
+        console.log("Processing referral payment");
         // Create payment record for referral
         paymentResponse = await createPayment(req.headers.authorization, {
           ...paymentData,
           paymentMethod: "free",
           platformFee: PLATFORM_FEE,
         });
-
+console.log("paymentResponse", paymentResponse);
         if (!paymentResponse || paymentResponse.status !== "success") {
           await cancelSlotAndUpdateAppointmentStatus(appointment, req, "Payment failed");
           return res.status(500).json({
@@ -819,12 +820,12 @@ console.log("Wallet transaction updated to approved:", update.data);
             },
           }
         );
-
+console.log("referralUpdateResp", referralUpdateResp.data);
         if (referralUpdateResp.data?.status !== "success") {
           await cancelSlotAndUpdateAppointmentStatus(appointment, req, "Referral update failed");
           return res.status(500).json({
             status: "fail",
-            message: "Failed to update referral status",
+            message:  referralUpdateResp.data?.message || "Failed to update referral status",
           });
         }
 
@@ -835,11 +836,12 @@ console.log("Wallet transaction updated to approved:", update.data);
           { new: true }
         );
       } catch (err) {
+        console.log("err", err?.message);
         console.error("Error processing referral payment:", err.message);
         await cancelSlotAndUpdateAppointmentStatus(appointment, req, "Referral payment failed");
         return res.status(500).json({
           status: "fail",
-          message: "Error processing referral payment",
+          message: err?.message || "Error processing referral payment",
           error: err.message,
         });
       }
