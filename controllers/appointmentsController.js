@@ -510,7 +510,6 @@ exports.createAppointment = async (req, res) => {
         message: error.details[0].message,
       });
     }
-console.log("Request body:", req.body);
     // Step 2: Check appointment time validity
     const appointmentDateTime = moment.tz(
       `${req.body.appointmentDate} ${req.body.appointmentTime}`,
@@ -525,7 +524,6 @@ console.log("Request body:", req.body);
         message: "Appointment date & time must not be in the past.",
       });
     }
-console.log("Appointment date and time is valid.");
     // Step 3: Check if slot is already booked
     const checkSlotAvailable = await appointmentModel.find({
       doctorId: req.body.doctorId,
@@ -540,13 +538,11 @@ console.log("Appointment date and time is valid.");
         message: "Slot already booked or unavailable for this date and time",
       });
     }
-console.log("Slot is available.");
      req.body.createdBy = req.headers?.userid || null;
     req.body.updatedBy = req.headers?.userid || null;
     req.body.referralCode = req.body.referralCode || null;
     // Step 4: Validate wallet balance (if applicable)
     const finalAmount = req.body.finalAmount || req.body.amount;
-    console.log("Final amount to be charged:", finalAmount);
     if (req.body.appSource === "patientApp" && req.body.paymentMethod === "wallet") {
       try {
         const walletResponse = await axios.get(
@@ -577,7 +573,6 @@ console.log("Slot is available.");
         });
       }
     }
-console.log("Wallet balance is sufficient (if applicable).");
     // Step 5: Validate referral code (if applicable)
     if (req.body.appSource === "patientApp" && req.body.referralCode) {
       try {
@@ -621,7 +616,6 @@ console.log("Wallet balance is sufficient (if applicable).");
         });
       }
     }
-console.log("Referral code is valid (if applicable).");
     // Step 6: Generate appointmentId
     const appointmentCounter = await sequenceSchema.findByIdAndUpdate(
       { _id: SEQUENCE_PREFIX.APPOINTMENTS_SEQUENCE.APPOINTMENTS_MODEL },
@@ -633,7 +627,6 @@ console.log("Referral code is valid (if applicable).");
     req.body.appointmentId =
       SEQUENCE_PREFIX.APPOINTMENTS_SEQUENCE.SEQUENCE.concat(appointmentCounter.seq);
    
-console.log("Generated appointmentId:", req.body.appointmentId);
     // Step 8: Handle optional medicalReport (upload to S3)
     if (req.file) {
       const fileExt = path.extname(req.file.originalname);
@@ -649,7 +642,6 @@ console.log("Generated appointmentId:", req.body.appointmentId);
       await s3Client.send(new PutObjectCommand(uploadParams));
       req.body.medicalReport = `https://${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${s3Key}`;
     }
-console.log("Medical report uploaded to S3 (if applicable).");
     // Step 9: Check and book slot
     const bookingResult = await bookSlot(req);
     if (!bookingResult || bookingResult.modifiedCount === 0) {
@@ -658,10 +650,8 @@ console.log("Medical report uploaded to S3 (if applicable).");
         message: "Slot already booked or slots do not exist. Check slot availability.",
       });
     }
-console.log("Slot booked successfully.");
     // Step 10: Create appointment
     const appointment = await appointmentModel.create(req.body);
-console.log("Appointment created:", appointment);
     // Step 11: Process payment
     let paymentResponse;
     let updatedAppointment;
@@ -678,7 +668,6 @@ console.log("Appointment created:", appointment);
       paymentFrom: "appointment",
       appSource: req.body.appSource,
     };
-console.log("paymentData", paymentData);
 
     if (req.body.appSource === "patientApp" && req.body.paymentMethod === "wallet") {
       try {
@@ -711,7 +700,6 @@ console.log("paymentData", paymentData);
           transactionData,
           { headers: { "Content-Type": "application/json" } }
         );
-console.log("transactionResponse", transactionResponse.data);
         if (transactionResponse.data?.status !== "success") {
           await cancelSlotAndUpdateAppointmentStatus(appointment, req, "Wallet payment failed");
           return res.status(500).json({
@@ -719,14 +707,12 @@ console.log("transactionResponse", transactionResponse.data);
             message: `Wallet payment failed: ${transactionResponse.data?.message || "Unknown error"}`,
           });
         }
-console.log("Wallet transaction created:", transactionResponse.data.data);
         // Create payment record for wallet
         paymentResponse = await createPayment(req.headers.authorization, {
           ...paymentData,
           paymentMethod: "wallet",
           platformFee: PLATFORM_FEE,
         });
-console.log("paymentResponse", paymentResponse);
         if (!paymentResponse || paymentResponse.status !== "success") {
           // Reverse wallet transaction
       await axios.post(
@@ -773,7 +759,6 @@ console.log("paymentResponse", paymentResponse);
       },
       { headers: { "Content-Type": "application/json" } }
     );
-console.log("Wallet transaction updated to approved:", update.data);
         // Update appointment for wallet payment
         updatedAppointment = await appointmentModel.findByIdAndUpdate(
           appointment._id,
@@ -877,14 +862,7 @@ console.log("Wallet transaction updated to approved:", update.data);
         });
       }
     } 
-    // else {
-    //   console.log("No payment processing required.");
-    //   // Handle cases where payment is not required or invalid
-    //   return res.status(400).json({
-    //     status: "fail",
-    //     message: "Invalid payment configuration",
-    //   });
-    // }
+   
 
     return res.status(200).json({
       status: "success",
