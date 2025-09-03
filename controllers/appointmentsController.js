@@ -891,7 +891,7 @@ console.log("Wallet transaction updated to approved:", update.data);
       message: "Appointment created successfully",
       data: {
         appointmentDetails: updatedAppointment || appointment,
-        paymentDetails: paymentResponse.data,
+        paymentDetails: paymentResponse?.data,
         appointmentId: req.body.appointmentId,
         appointmentObjId: appointment._id,
         platformfee: PLATFORM_FEE,
