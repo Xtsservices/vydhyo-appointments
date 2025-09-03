@@ -18,7 +18,7 @@ const sendOTPSMS = async (mobile, codeOrMessage, templateid) => {
     const defaultTemplate =
     "Dear {#var#} Kindly use this {#var#} otp For Login . thank You For choosing - Vydhyo";
 
-  const template = customTemplate || defaultTemplate;
+  const template =  defaultTemplate;
   // Function to populate the template with dynamic values
   function populateTemplate(template, values) {
     let index = 0;
