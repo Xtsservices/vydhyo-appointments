@@ -836,9 +836,11 @@ exports.createAppointment = async (req, res) => {
       }
     } else if (req.body.paymentStatus === "paid" && req.body.appSource !== "patientApp") {
       try {
+         const refferalPaymentData = { ...paymentData };
+        delete refferalPaymentData.finalAmount;
         // Create payment record for non-patientApp
         paymentResponse = await createPayment(req.headers.authorization, {
-          ...paymentData,
+          ...refferalPaymentData,
           // paymentMethod: req.body.paymentMethod || "unknown",
         });
 
