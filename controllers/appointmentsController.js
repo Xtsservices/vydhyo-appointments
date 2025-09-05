@@ -2814,26 +2814,25 @@ exports.getAllFamilyDoctors = async (req, res) => {
 };
 
 exports.checkPatientConsultedDoctor = async (req, res) => {
-  console.log("checkPatientConsultedDoctor called with:", req.query);
    try {
-    const { userId, doctorId } = req.query;
+    const { userId, doctorId, appointmentId } = req.query;
 
     // Validate input
-    if (!userId || !doctorId) {
+    if (!userId || !doctorId || !appointmentId) {
       return res.status(400).json({
         status: 'fail',
-        message: 'userId and doctorId are required'
+        message: 'userId, doctorId, and appointmentId are required'
       });
     }
 
     // Check for completed appointments
     const appointment = await appointmentModel.findOne({
+       appointmentId,
       userId,
       doctorId,
       appointmentStatus: 'completed' // Only count completed appointments
     });
 
-    console.log("Appointment found:", appointment);
     res.status(200).json({
       status: 'success',
       hasAppointment: !!appointment
