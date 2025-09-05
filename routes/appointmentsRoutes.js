@@ -24,7 +24,8 @@ const {
   getAppointmentDataByUserIdAndDoctorId,
   getAllFamilyDoctors,
   updateAppointmentStatus,
-  releaseDoctorSlot
+  releaseDoctorSlot,
+  checkPatientConsultedDoctor
 } = require('../controllers/appointmentsController');
 
 // router.post('/createAppointment', createAppointment);
@@ -59,5 +60,7 @@ router.get("/getAppointmentDataByUserIdAndDoctorId", getAppointmentDataByUserIdA
 
 //patient app
 router.get('/getAllFamilyDoctors', getAllFamilyDoctors);
+router.get('/checkPatientConsultedDoctor', checkPatientConsultedDoctor);
+
 
 module.exports = router;

@@ -2812,3 +2812,38 @@ exports.getAllFamilyDoctors = async (req, res) => {
     });
   }
 };
+
+exports.checkPatientConsultedDoctor = async (req, res) => {
+  console.log("checkPatientConsultedDoctor called with:", req.query);
+   try {
+    const { userId, doctorId } = req.query;
+
+    // Validate input
+    if (!userId || !doctorId) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'userId and doctorId are required'
+      });
+    }
+
+    // Check for completed appointments
+    const appointment = await appointmentModel.findOne({
+      userId,
+      doctorId,
+      appointmentStatus: 'completed' // Only count completed appointments
+    });
+
+    console.log("Appointment found:", appointment);
+    res.status(200).json({
+      status: 'success',
+      hasAppointment: !!appointment
+    });
+  } catch (error) {
+    console.error('Error checking appointment:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Error checking appointment status',
+      error: error.message
+    });
+  }
+}
