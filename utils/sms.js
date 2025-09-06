@@ -15,6 +15,8 @@ console.log("SMS API response:", response.data);
 };
 
 const sendOTPSMS = async (mobile, codeOrMessage, templateid) => {
+  console.log(`Preparing to send SMS to ${mobile} with message: ${codeOrMessage} and template ID: ${templateid}`);
+  
     const defaultTemplate =
     "Dear {#var#} Kindly use this {#var#} otp For Login . thank You For choosing - Vydhyo";
 

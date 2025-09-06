@@ -134,7 +134,7 @@ const sendAppointmentReminders = async () => {
 
         const message = `Reminder: Your appointment with Dr. ${doctorName} is scheduled for ${date} at ${time}. Kindly reach 10 mins early. - VYDHYO`;
 
-        const templateId = process.env.APPOINTMENT_REMINDER_TEMPLATE_ID|| "1707175447288977953"; // replace with real template id
+        const templateId = process.env.APPOINTMENT_REMINDER_TEMPLATE_ID|| "1707175447288977953"; 
 
         await sendOTPSMS(patient.mobile, message, templateId);
         console.log(`Reminder SMS sent to ${patient.mobile}`);
