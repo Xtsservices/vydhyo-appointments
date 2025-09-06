@@ -88,19 +88,56 @@ const autoCompleteAppointments = async () => {
  //Send Appointment Reminders (1 hour before)
 const sendAppointmentReminders = async () => {
   try {
-    console.log("Running appointment reminder cron job...");
 
     const now = moment();
     const oneHourLater = moment().add(1, "hour");
 
+    // Fetch only appointments in the next hour
     const appointments = await appointmentsModel.find({
       appointmentStatus: "scheduled",
       reminderSent: false,
-      appointmentDate: {
-        $gte: now.startOf("day").toDate(),
-        $lte: oneHourLater.endOf("day").toDate(),
-      },
+      $expr: {
+        $and: [
+          {
+            $gte: [
+              {
+                $dateFromString: {
+                  dateString: {
+                    $concat: [
+                      { $dateToString: { format: "%Y-%m-%d", date: "$appointmentDate" } },
+                      "T",
+                      "$appointmentTime",
+                      ":00"
+                    ]
+                  },
+                  timezone: "Asia/Kolkata"
+                }
+              },
+              now.toDate()
+            ]
+          },
+          {
+            $lte: [
+              {
+                $dateFromString: {
+                  dateString: {
+                    $concat: [
+                      { $dateToString: { format: "%Y-%m-%d", date: "$appointmentDate" } },
+                      "T",
+                      "$appointmentTime",
+                      ":00"
+                    ]
+                  },
+                  timezone: "Asia/Kolkata"
+                }
+              },
+              oneHourLater.toDate()
+            ]
+          }
+        ]
+      }
     });
+
 
     if (appointments.length === 0) {
       console.log("No appointments found for reminders.");
@@ -113,12 +150,9 @@ const sendAppointmentReminders = async () => {
         "YYYY-MM-DD HH:mm"
       );
 
-      if (
-        apptDateTime.isBetween(
-          oneHourLater.clone().subtract(5, "minutes"),
-          oneHourLater.clone().add(5, "minutes")
-        )
-      ) {
+      const diffMinutes = apptDateTime.diff(now, "minutes");
+
+      if (diffMinutes >= 55 && diffMinutes <= 65) {
         const users = await getUsersByIds([appointment.doctorId, appointment.userId]);
         const doctor = users[appointment.doctorId];
         const patient = users[appointment.userId];
@@ -134,15 +168,14 @@ const sendAppointmentReminders = async () => {
 
         const message = `Reminder: Your appointment with Dr. ${doctorName} is scheduled for ${date} at ${time}. Kindly reach 10 mins early. - VYDHYO`;
 
-        const templateId = process.env.APPOINTMENT_REMINDER_TEMPLATE_ID|| "1707175447288977953"; 
-
+        const templateId = process.env.APPOINTMENT_REMINDER_TEMPLATE_ID || "1707175447288977953";
         await sendOTPSMS(patient.mobile, message, templateId);
-        console.log(`Reminder SMS sent to ${patient.mobile}`);
 
         await appointmentsModel.updateOne(
           { appointmentId: appointment.appointmentId },
           { $set: { reminderSent: true, updatedAt: new Date(), updatedBy: "system" } }
         );
+
       }
     }
 
@@ -151,6 +184,7 @@ const sendAppointmentReminders = async () => {
     console.error("Error in sendAppointmentReminders cron job:", err);
   }
 };
+
 
 
 /**
