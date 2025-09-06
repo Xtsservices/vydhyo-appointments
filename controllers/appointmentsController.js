@@ -707,9 +707,11 @@ exports.createAppointment = async (req, res) => {
             message: `Wallet payment failed: ${transactionResponse.data?.message || "Unknown error"}`,
           });
         }
+         const refferalPaymentData = { ...paymentData };
+        delete refferalPaymentData.finalAmount;
         // Create payment record for wallet
         paymentResponse = await createPayment(req.headers.authorization, {
-          ...paymentData,
+          ...refferalPaymentData,
           paymentMethod: "wallet",
           platformFee: PLATFORM_FEE,
         });
@@ -777,10 +779,11 @@ exports.createAppointment = async (req, res) => {
       }
     } else if (req.body.appSource === "patientApp" && req.body.referralCode) {
       try {
-        console.log("Processing referral payment");
+        const refferalPaymentData = { ...paymentData };
+        delete refferalPaymentData.finalAmount;
         // Create payment record for referral
         paymentResponse = await createPayment(req.headers.authorization, {
-          ...paymentData,
+          ...refferalPaymentData,
           paymentMethod: "free",
           platformFee: PLATFORM_FEE,
         });
@@ -834,9 +837,11 @@ console.log("referralUpdateResp", referralUpdateResp.data);
       }
     } else if (req.body.paymentStatus === "paid" && req.body.appSource !== "patientApp") {
       try {
+         const refferalPaymentData = { ...paymentData };
+        delete refferalPaymentData.finalAmount;
         // Create payment record for non-patientApp
         paymentResponse = await createPayment(req.headers.authorization, {
-          ...paymentData,
+          ...refferalPaymentData,
           // paymentMethod: req.body.paymentMethod || "unknown",
         });
 
@@ -2796,3 +2801,37 @@ exports.getAllFamilyDoctors = async (req, res) => {
     });
   }
 };
+
+exports.checkPatientConsultedDoctor = async (req, res) => {
+   try {
+    const { userId, doctorId, appointmentId } = req.query;
+
+    // Validate input
+    if (!userId || !doctorId || !appointmentId) {
+      return res.status(400).json({
+        status: 'fail',
+        message: 'userId, doctorId, and appointmentId are required'
+      });
+    }
+
+    // Check for completed appointments
+    const appointment = await appointmentModel.findOne({
+       appointmentId,
+      userId,
+      doctorId,
+      appointmentStatus: 'completed' // Only count completed appointments
+    });
+
+    res.status(200).json({
+      status: 'success',
+      hasAppointment: !!appointment
+    });
+  } catch (error) {
+    console.error('Error checking appointment:', error);
+    res.status(500).json({
+      status: 'error',
+      message: 'Error checking appointment status',
+      error: error.message
+    });
+  }
+}
