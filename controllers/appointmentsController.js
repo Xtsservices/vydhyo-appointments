@@ -4,7 +4,7 @@ const sequenceSchema = require("../sequence/sequenceSchema");
 const appointmentSchema = require("../schemas/appointmentSchema");
 const DoctorSlotModel = require("../models/doctorSlotsModel");
 const { SEQUENCE_PREFIX } = require("../utils/constants");
-const { getUserDetailsBatch } = require("../services/userService");
+const { getUserDetailsBatch, getUsersByIds } = require("../services/userService");
 const {
   createPayment,
   getAppointmentPayments,
@@ -787,7 +787,7 @@ exports.createAppointment = async (req, res) => {
           paymentMethod: "free",
           platformFee: PLATFORM_FEE,
         });
-
+console.log("paymentResponse", paymentResponse);
         if (!paymentResponse || paymentResponse.status !== "success") {
           await cancelSlotAndUpdateAppointmentStatus(appointment, req, "Payment failed");
           return res.status(500).json({
@@ -810,12 +810,12 @@ exports.createAppointment = async (req, res) => {
             },
           }
         );
-
+console.log("referralUpdateResp", referralUpdateResp.data);
         if (referralUpdateResp.data?.status !== "success") {
           await cancelSlotAndUpdateAppointmentStatus(appointment, req, "Referral update failed");
           return res.status(500).json({
             status: "fail",
-            message: "Failed to update referral status",
+            message:  referralUpdateResp.data?.message || "Failed to update referral status",
           });
         }
 
@@ -826,11 +826,12 @@ exports.createAppointment = async (req, res) => {
           { new: true }
         );
       } catch (err) {
+        console.log("err", err?.message);
         console.error("Error processing referral payment:", err.message);
         await cancelSlotAndUpdateAppointmentStatus(appointment, req, "Referral payment failed");
         return res.status(500).json({
           status: "fail",
-          message: "Error processing referral payment",
+          message: err?.message || "Error processing referral payment",
           error: err.message,
         });
       }
@@ -1746,34 +1747,22 @@ exports.rescheduleAppointment = async (req, res) => {
     
       // ✅ SMS to Patient: Sends an SMS notification to the patient’s registered mobile number
 
-    let doctorName = "Doctor";
-    let patientMobile = null;
-  const templateid = "1707175447494195093"; 
+    
+  const templateid = process.env.APPOINTMENT_RESCHEDULE_TEMPLATE_ID || "1707175447494195093"; 
 
-    try {
-      const userResp = await axios.post(
-        "http://localhost:4002/users/getUsersByIds",
-        { userIds: [appointment.doctorId, appointment.userId] },
-        { headers: { "Content-Type": "application/json" } }
-      );
+  const userIds = [appointment.doctorId, appointment.userId];
+const users = await getUsersByIds(userIds);
 
-      if (userResp?.data?.users?.length > 0) {
-        userResp.data.users.forEach(u => {
-          if (u.userId === appointment.doctorId) {
-            doctorName = `${u.firstname || ""} ${u.lastname || ""}`.trim();
-          }
-          if (u.userId === appointment.userId) {
-            patientMobile = u.mobile; // ✅ Patient mobile for SMS
-          }
-        });
-      }
-    } catch (err) {
-      console.error("Error fetching user details:", err.message);
-    }
+const doctor = users[appointment.doctorId];
+const patient = users[appointment.userId];
+
+const doctorName = `${doctor?.firstname || ""} ${doctor?.lastname || ""}`.trim();
+const patientMobile = patient?.mobile;
+
     if (patientMobile) {
   const formattedDate = moment(newDate).format("DD-MM-YYYY");
   const rescheduleMsg = `Your appointment with Dr. ${doctorName} has been rescheduled to ${formattedDate} at ${newTime}. Thank you for using VYDHYO.`;
-
+console.log("Reschedule SMS:", rescheduleMsg, patientMobile);
   try {
     await sendOTPSMS(patientMobile, rescheduleMsg,  templateid, "Dear {#var#} {#var#}");
   } catch (error) {

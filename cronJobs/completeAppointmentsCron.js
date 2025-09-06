@@ -1,8 +1,11 @@
 const cron = require('node-cron');
+const moment = require("moment");
 const mongoose = require('mongoose');
 const appointmentsModel = require('../models/appointmentsModel');
 const { creditReferralReward } = require('../services/referralService');
 const { REWARD_AMOUNT } = require('../utils/fees');
+const { getUsersByIds } = require('../services/userService');
+const { sendOTPSMS } = require('../utils/sms');
 
 // Function to mark appointments as completed if older than 48 hours
 const autoCompleteAppointments = async () => {
@@ -80,10 +83,123 @@ const autoCompleteAppointments = async () => {
   }
 };
 
-// Schedule the cron job to run every hour
+
+
+ //Send Appointment Reminders (1 hour before)
+const sendAppointmentReminders = async () => {
+  try {
+
+    const now = moment();
+    const oneHourLater = moment().add(1, "hour");
+
+    // Fetch only appointments in the next hour
+    const appointments = await appointmentsModel.find({
+      appointmentStatus: "scheduled",
+      reminderSent: false,
+      $expr: {
+        $and: [
+          {
+            $gte: [
+              {
+                $dateFromString: {
+                  dateString: {
+                    $concat: [
+                      { $dateToString: { format: "%Y-%m-%d", date: "$appointmentDate" } },
+                      "T",
+                      "$appointmentTime",
+                      ":00"
+                    ]
+                  },
+                  timezone: "Asia/Kolkata"
+                }
+              },
+              now.toDate()
+            ]
+          },
+          {
+            $lte: [
+              {
+                $dateFromString: {
+                  dateString: {
+                    $concat: [
+                      { $dateToString: { format: "%Y-%m-%d", date: "$appointmentDate" } },
+                      "T",
+                      "$appointmentTime",
+                      ":00"
+                    ]
+                  },
+                  timezone: "Asia/Kolkata"
+                }
+              },
+              oneHourLater.toDate()
+            ]
+          }
+        ]
+      }
+    });
+
+
+    if (appointments.length === 0) {
+      console.log("No appointments found for reminders.");
+      return;
+    }
+
+    for (const appointment of appointments) {
+      const apptDateTime = moment(
+        `${moment(appointment.appointmentDate).format("YYYY-MM-DD")} ${appointment.appointmentTime}`,
+        "YYYY-MM-DD HH:mm"
+      );
+
+      const diffMinutes = apptDateTime.diff(now, "minutes");
+
+      if (diffMinutes >= 55 && diffMinutes <= 65) {
+        const users = await getUsersByIds([appointment.doctorId, appointment.userId]);
+        const doctor = users[appointment.doctorId];
+        const patient = users[appointment.userId];
+
+        if (!patient?.mobile) {
+          console.warn(`No mobile found for patient ${appointment.userId}`);
+          continue;
+        }
+
+        const doctorName = `${doctor?.firstname || ""} ${doctor?.lastname || ""}`.trim();
+        const date = moment(appointment.appointmentDate).format("DD-MM-YYYY");
+        const time = appointment.appointmentTime;
+
+        const message = `Reminder: Your appointment with Dr. ${doctorName} is scheduled for ${date} at ${time}. Kindly reach 10 mins early. - VYDHYO`;
+
+        const templateId = process.env.APPOINTMENT_REMINDER_TEMPLATE_ID || "1707175447288977953";
+        await sendOTPSMS(patient.mobile, message, templateId);
+
+        await appointmentsModel.updateOne(
+          { appointmentId: appointment.appointmentId },
+          { $set: { reminderSent: true, updatedAt: new Date(), updatedBy: "system" } }
+        );
+
+      }
+    }
+
+    console.log("Appointment reminder cron job completed successfully.");
+  } catch (err) {
+    console.error("Error in sendAppointmentReminders cron job:", err);
+  }
+};
+
+
+
+/**
+ * Cron Schedulers
+ */
+// Auto-complete every hour
 cron.schedule('0 * * * *', autoCompleteAppointments, {
   scheduled: true,
   timezone: 'Asia/Kolkata' // Adjust to your timezone (IST in this case)
 });
 
-module.exports = { autoCompleteAppointments };
+// Reminders every 5 minutes
+cron.schedule("*/5 * * * *", sendAppointmentReminders, {
+  scheduled: true,
+  timezone: "Asia/Kolkata",
+});
+
+module.exports = { autoCompleteAppointments, sendAppointmentReminders };

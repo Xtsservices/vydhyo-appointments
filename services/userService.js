@@ -36,7 +36,32 @@ async function getUserDetailsBatch(authHeader, bodyParams) {
   }
 };
 
+
+const getUsersByIds = async (userIds) => {
+  try {
+    const resp = await axios.post(
+      `${USER_SERVICE_BASE_URL}/users/getUsersByIds`,
+      { userIds },
+      { headers: { "Content-Type": "application/json" } }
+    );
+
+    const usersArray = resp?.data?.users || [];
+    const usersMap = {};
+
+    usersArray.forEach(u => {
+      usersMap[u.userId] = u; // store by userId for easy access
+    });
+
+    return usersMap;
+  } catch (err) {
+    console.error("Error fetching user details:", err.message);
+    return {};
+  }
+};
+
+
 module.exports = {
   getUserById,
-  getUserDetailsBatch
+  getUserDetailsBatch,
+  getUsersByIds
 };

@@ -6,7 +6,7 @@ const sendSMS = async (params) => {
 
     // Trigger the API using axios
     const response = await axios.get(url, { params });
-
+console.log("SMS API response:", response.data);
     return response.data; // Return the API response
   } catch (error) {
     console.error("Error sending SMS:", error);
@@ -15,6 +15,8 @@ const sendSMS = async (params) => {
 };
 
 const sendOTPSMS = async (mobile, codeOrMessage, templateid) => {
+  console.log(`Preparing to send SMS to ${mobile} with message: ${codeOrMessage} and template ID: ${templateid}`);
+  
     const defaultTemplate =
     "Dear {#var#} Kindly use this {#var#} otp For Login . thank You For choosing - Vydhyo";
 
@@ -38,6 +40,7 @@ const sendOTPSMS = async (mobile, codeOrMessage, templateid) => {
       message: codeOrMessage,
       templateid: templateid,
     };
+    console.log("SMS params:", params);
     // Call the sendSMS function
     return await sendSMS(params);
   } catch (error) {
