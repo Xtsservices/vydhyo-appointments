@@ -2218,7 +2218,7 @@ exports.getAppointmentsByDoctorID2 = async (req, res) => {
   }
 };
 
-exports.getAppointmentsByDoctorID = async (req, res) => {
+exports.getAppointmentsByDoctorID2 = async (req, res) => {
   try {
     const doctorId = req.query.doctorId || req.headers.userid;
     const { type } = req.params;
@@ -2472,7 +2472,179 @@ exports.getAppointmentsByDoctorID = async (req, res) => {
   }
 };
 
-exports.getAppointmentsCountByDoctorID = async (req, res) => {
+exports.getAppointmentsByDoctorID = async (req, res) => {
+  try {
+    const doctorId = req.query.doctorId || req.headers.userid;
+    const { type } = req.params;
+    const {
+      date,
+      searchText,
+      clinic,
+      appointmentType,
+      status,
+      page = 1,
+      limit = 5,
+    } = req.query;
+
+    if (!doctorId) {
+      return res.status(400).json({
+        status: "fail",
+        message: "Doctor ID is required in headers",
+      });
+    }
+
+    const pageNum = parseInt(page, 10);
+    const limitNum = parseInt(limit, 10);
+    if (isNaN(pageNum) || pageNum < 1 || isNaN(limitNum) || limitNum < 1) {
+      return res.status(400).json({
+        status: "fail",
+        message: "Invalid page or limit parameters",
+      });
+    }
+
+    // ✅ Build query once
+    const query = { doctorId, isDeleted: { $ne: true } };
+
+    if (type === "appointment") {
+      query.appointmentStatus = { $in: ["scheduled", "rescheduled", "cancelled"] };
+    } else if (type === "dashboardAppointment") {
+      query.appointmentStatus = { $in: ["scheduled", "rescheduled", "cancelled", "completed"] };
+    } else {
+      query.appointmentStatus = "completed";
+    }
+
+    if (date) {
+      const startOfDay = moment.tz(date, "YYYY-MM-DD", "Asia/Kolkata").startOf("day").toDate();
+      const endOfDay = moment.tz(date, "YYYY-MM-DD", "Asia/Kolkata").endOf("day").toDate();
+      query.appointmentDate = { $gte: startOfDay, $lte: endOfDay };
+    }
+
+    if (clinic && clinic !== "all") query.appointmentDepartment = clinic;
+    if (appointmentType && appointmentType !== "all") query.appointmentType = appointmentType;
+    if (status && status !== "all") query.appointmentStatus = status;
+
+    // ✅ Search Text Optimization
+    let userIdsFromSearch = [];
+    if (searchText) {
+      const userServiceUrl = process.env.USER_SERVICE_URL || "http://localhost:4002";
+
+      // fire & forget, don’t block main query
+      const userSearchPromise = axios
+        .post(`${userServiceUrl}/users/searchUsers`, { searchText }, { headers: { "Content-Type": "application/json" } })
+        .then((res) => (res.data.status === "success" ? res.data.data.map((u) => u.userId) : []))
+        .catch((err) => {
+          console.error("Error searching users:", err.message);
+          return [];
+        });
+
+      userIdsFromSearch = await userSearchPromise;
+
+      query.$or = [
+        { patientName: { $regex: searchText, $options: "i" } },
+        { appointmentId: { $regex: searchText, $options: "i" } },
+        { appointmentId: searchText },
+        { userId: { $regex: searchText, $options: "i" } },
+        { userId: searchText },
+        ...(userIdsFromSearch.length > 0 ? [{ userId: { $in: userIdsFromSearch } }] : []),
+      ];
+    }
+
+    const skip = (pageNum - 1) * limitNum;
+
+    // ✅ Use Promise.all to fetch count + data together
+    const [totalAppointments, appointments] = await Promise.all([
+      appointmentModel.countDocuments(query),
+      appointmentModel
+        .find(query)
+        .sort({ createdAt: -1, appointmentDate: -1 })
+        .skip(skip)
+        .limit(limitNum),
+    ]);
+
+    const totalPages = Math.ceil(totalAppointments / limitNum);
+
+    // ✅ Parallel external calls
+    const userIds = [...new Set(appointments.map((app) => app.userId))];
+
+    const userServiceUrl = process.env.USER_SERVICE_URL || "http://localhost:4002";
+    const [users, prescriptions] = await Promise.all([
+      userIds.length
+        ? axios
+            .post(`${userServiceUrl}/users/getUsersDetailsByIds`, { userIds }, { headers: { "Content-Type": "application/json" } })
+            .then((res) => (res.data.status === "success" ? res.data.data : []))
+            .catch((err) => {
+              console.error("Error fetching user details:", err.message);
+              return [];
+            })
+        : [],
+      (query.appointmentStatus === "completed" || query.appointmentStatus?.$in?.includes("completed"))
+        ? (() => {
+            const appointmentIds = appointments.filter((a) => a.appointmentStatus === "completed").map((a) => a.appointmentId);
+            if (appointmentIds.length === 0) return [];
+            return axios
+              .post(`${userServiceUrl}/pharmacy/getPrescriptionsByAppointmentIds`, { appointmentIds }, { headers: { "Content-Type": "application/json" } })
+              .then((res) => (res.data.status === "success" ? res.data.data : []))
+              .catch((err) => {
+                console.error("Error fetching prescriptions:", err.message);
+                return [];
+              });
+          })()
+        : [],
+    ]);
+
+    // ✅ Map once
+    const enrichedAppointments = appointments.map((appointment) => {
+      const user = users.find((u) => u.userId === appointment.userId) || {};
+      const prescription = prescriptions.find((p) => p.appointmentId === appointment.appointmentId) || null;
+
+      return {
+        ...appointment._doc,
+        patientDetails: {
+          patientName:
+            appointment.patientName || `${user.firstname || ""} ${user.lastname || ""}`.trim(),
+          dob: user.DOB || null,
+          mobile: user.mobile || null,
+          gender: user.gender || null,
+          age: user.age || null,
+        },
+        ePrescription: prescription
+          ? {
+              prescriptionId: prescription.prescriptionId,
+              patientInfo: prescription.patientInfo,
+              vitals: prescription.vitals,
+              diagnosis: prescription.diagnosis,
+              advice: prescription.advice,
+              createdAt: prescription.createdAt,
+              updatedAt: prescription.updatedAt,
+            }
+          : null,
+      };
+    });
+
+    return res.status(200).json({
+      status: "success",
+      message: "Appointments retrieved successfully",
+      data: {
+        appointments: enrichedAppointments,
+        pagination: {
+          currentPage: pageNum,
+          pageSize: limitNum,
+          totalItems: totalAppointments,
+          totalPages,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Error in getAppointmentsByDoctorID:", error);
+    return res.status(500).json({
+      status: "fail",
+      message: error.message || "Internal server error",
+    });
+  }
+};
+
+
+exports.getAppointmentsCountByDoctorID2 = async (req, res) => {
   try {
     const doctorId = req.query.doctorId || req.headers.userid;
     const { startDate, endDate } = req.query;
@@ -2544,6 +2716,92 @@ exports.getAppointmentsCountByDoctorID = async (req, res) => {
         rescheduled: rescheduledCount,
         cancelled: cancelledCount,
         completed: completedCount,
+      },
+    });
+  } catch (error) {
+    console.error("Error in getAppointmentsByDoctorID:", error);
+    return res.status(500).json({
+      status: "fail",
+      message: error.message || "Internal server error",
+    });
+  }
+};
+
+exports.getAppointmentsCountByDoctorID = async (req, res) => {
+  try {
+    const doctorId = req.query.doctorId || req.headers.userid;
+    const { startDate, endDate } = req.query;
+
+    if (!doctorId) {
+      return res.status(400).json({
+        status: "fail",
+        message: "Doctor ID is required in headers",
+      });
+    }
+
+    // Date filter
+    let dateFilter = {};
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+
+      if (isNaN(start) || isNaN(end)) {
+        return res.status(400).json({
+          status: "fail",
+          message: "Invalid date format",
+        });
+      }
+      if (start > end) {
+        return res.status(400).json({
+          status: "fail",
+          message: "Start date cannot be after end date",
+        });
+      }
+      dateFilter = {
+        appointmentDate: { $gte: start, $lte: end },
+      };
+    }
+
+    const matchQuery = {
+      doctorId,
+      isDeleted: { $ne: true },
+      ...dateFilter,
+      appointmentStatus: {
+        $in: ["scheduled", "rescheduled", "cancelled", "completed"],
+      },
+    };
+
+    const counts = await appointmentModel.aggregate([
+      { $match: matchQuery },
+      {
+        $group: {
+          _id: "$appointmentStatus",
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    // Build response
+    const countsMap = counts.reduce((acc, item) => {
+      acc[item._id] = item.count;
+      return acc;
+    }, {});
+
+    const scheduled = countsMap["scheduled"] || 0;
+    const rescheduled = countsMap["rescheduled"] || 0;
+    const cancelled = countsMap["cancelled"] || 0;
+    const completed = countsMap["completed"] || 0;
+    const total = scheduled + rescheduled + cancelled + completed;
+
+    return res.status(200).json({
+      status: "success",
+      message: "Appointments counts retrieved successfully",
+      data: {
+        total,
+        scheduled,
+        rescheduled,
+        cancelled,
+        completed,
       },
     });
   } catch (error) {
