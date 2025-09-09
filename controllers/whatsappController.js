@@ -531,8 +531,8 @@ const createPaymentLink = async (payment) => {
     const CASHFREE_APP_ID = process.env.pgAppID;
     const CASHFREE_SECRET_KEY = process.env.pgSecreteKey;
     const CASHFREE_BASE_URL =
-      process.env.CASHFREE_BASE_URL || "https://sandbox.cashfree.com/pg";
-
+      process.env.CASHFREE_BASE_URL || "https://api.cashfree.com/pg";
+console.log("CASHFREE_BASE_URL", CASHFREE_BASE_URL);
     // Payload for Cashfree Link API
     const payload = {
       link_id: payment.linkId,
@@ -556,6 +556,7 @@ const createPaymentLink = async (payment) => {
       link_purpose: "Payment",
     };
 
+    console.log("Cashfree link payload:", payload);
     // API request to Cashfree
     const response = await axios.post(`${CASHFREE_BASE_URL}/links`, payload, {
       headers: {
@@ -565,7 +566,7 @@ const createPaymentLink = async (payment) => {
         "x-api-version": "2023-08-01",
       },
     });
-
+console.log("Cashfree link response:", response);
     if (response.status === 200 && response.data?.link_url) {
       console.log("Cashfree link response:", response.data);
       return response.data.link_url; // ✅ return actual link
@@ -574,6 +575,7 @@ const createPaymentLink = async (payment) => {
       return null;
     }
   } catch (error) {
+    console.log("error", error.response?.data || error.message);
     console.error("Error creating payment link:", error);
     return null;
   }
