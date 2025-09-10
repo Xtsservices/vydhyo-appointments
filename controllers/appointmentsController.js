@@ -1380,6 +1380,36 @@ exports.getTopDoctorsByAppointmentCount = async (req, res) => {
   }
 };
 
+
+
+async function initiateCashfreeRefund(orderId, refundId, amount, note) {
+  try {
+    const resp = await axios.post(
+      `https://api.cashfree.com/pg/orders/${orderId}/refunds`,
+      {
+        refund_amount: amount,
+        refund_id: refundId,
+        refund_note: note,
+        refund_speed: "STANDARD", // or "INSTANT" if enabled on your account
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-version": "2022-09-01",
+          "x-client-id": process.env.pgAppID,
+          "x-client-secret": process.env.pgSecreteKey,
+        },
+      }
+    );
+
+    return resp.data;
+  } catch (error) {
+    console.error("Cashfree refund error:", error.response?.data || error.message);
+    throw new Error("Refund initiation failed");
+  }
+}
+
+
 exports.cancelAppointment = async (req, res) => {
   const { appointmentId, reason } = req.body;
   if (!appointmentId) {
@@ -1541,6 +1571,37 @@ console.log("Final payment update after refund:", finalPaymentUpdate);
         });
       }
     }
+else if (payment.data.paymentMethod === "upi") {
+  try {
+    const refundResponse = await initiateCashfreeRefund(
+      payment.data.transactionId, // Cashfree order id stored when payment was made
+      `REFUND_${appointment.appointmentId}_${Date.now()}`, // unique refund_id
+      payment.data.finalAmount, // refund amount
+      `Refund for cancelled appointment ${appointment.appointmentId}` // refund note
+    );
+
+    console.log("Cashfree refund response:", refundResponse);
+
+    if (refundResponse?.refund_status === "SUCCESS" || refundResponse?.refund_status === "PENDING") {
+      await updatePayment(req.headers.authorization, {
+        appointmentId: appointment.appointmentId,
+        status: "refunded",
+      });
+    } else {
+      await updatePayment(req.headers.authorization, {
+        appointmentId: appointment.appointmentId,
+        status: "refund_failed",
+      });
+    }
+  } catch (err) {
+    console.error("Refund failed:", err.message);
+    await updatePayment(req.headers.authorization, {
+      appointmentId: appointment.appointmentId,
+      status: "refund_failed",
+    });
+    return res.status(500).json({ status: "fail", message: "Refund failed" });
+  }
+}
 
 
         
