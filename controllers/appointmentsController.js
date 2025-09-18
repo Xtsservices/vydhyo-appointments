@@ -842,7 +842,7 @@ console.log("referralUpdateResp", referralUpdateResp.data);
         // Create payment record for non-patientApp
         paymentResponse = await createPayment(req.headers.authorization, {
           ...refferalPaymentData,
-          paymentMethod: req.body.paymentMethod || "unknown",
+          paymentMethod: req.body.paymentMethod || "cash",
         });
 
         if (!paymentResponse || paymentResponse.status !== "success") {
