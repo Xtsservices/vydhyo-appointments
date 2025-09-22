@@ -3,8 +3,9 @@ const appointmentModel = require("../models/appointmentsModel");
 const sequenceSchema = require("../sequence/sequenceSchema");
 const appointmentSchema = require("../schemas/appointmentSchema");
 const DoctorSlotModel = require("../models/doctorSlotsModel");
+const UserModel = require("../models/usersModel");
 const { SEQUENCE_PREFIX } = require("../utils/constants");
-const { getUserDetailsBatch, getUsersByIds } = require("../services/userService");
+const { getUserDetailsBatch, getUsersByIds, getMinimalUser } = require("../services/userService");
 const {
   createPayment,
   getAppointmentPayments,
@@ -23,6 +24,7 @@ const {
 } = require("@aws-sdk/client-s3");
 const { creditReferralReward } = require("../services/referralService");
 const { sendOTPSMS } = require("../utils/sms");
+const sendNotification = require("../firebase/sendNotification");
 
 const AWS_BUCKET_NAME = process.env.AWS_BUCKET_NAME;
 const AWS_BUCKET_REGION = process.env.AWS_REGION;
@@ -878,6 +880,33 @@ console.log("referralUpdateResp", referralUpdateResp.data);
         });
       }
     } 
+
+    // Step 11: Send FCM Notification if patientApp and fcmToken exists
+    const appointmentToNotify = updatedAppointment || appointment;
+   if (req.body.appSource === "patientApp") {
+  try {
+    // Fetch patient info
+      const patient = await getMinimalUser(req.body.userId, req.headers.authorization);
+  
+    if (!patient || !patient.fcmToken) {
+      console.log("No FCM token found for the patient, skipping notification");
+    } else {
+      // Fetch doctor info
+       const doctor = await getMinimalUser(req.body.doctorId, req.headers.authorization);
+   
+      const doctorName = doctor ? `Dr. ${doctor.firstname} ${doctor.lastname}` : "your doctor";
+
+      sendNotification(
+        patient.fcmToken, // use token from user model
+        'Appointment Created',
+        `Your appointment with ${doctorName} is scheduled on ${req.body.appointmentDate} at ${req.body.appointmentTime}`,
+        { appointmentId: req.body.appointmentId }
+      );
+    }
+  } catch (err) {
+    console.error("Error sending FCM notification:", err.message);
+  }
+}
    
 
     return res.status(200).json({
@@ -1642,6 +1671,25 @@ else if (payment.data.paymentMethod === "upi") {
         .status(404)
         .json({ status: "fail", message: "Failed to cancel appointment" });
     }
+
+    // ✅ Send push notifications to patient and doctor
+    const userIds = [appointment.doctorId, appointment.userId];
+    const users = await getUsersByIds(userIds);
+    const doctor = users[appointment.doctorId];
+    const patient = users[appointment.userId];
+
+    const doctorName = `${doctor?.firstname || ""} ${doctor?.lastname || ""}`.trim();
+    const patientName = `${patient?.firstname || ""} ${patient?.lastname || ""}`.trim();
+    const patientFcmToken = patient?.fcmToken;
+   
+
+    const title = "Appointment Cancelled";
+    const patientBody = `Your appointment with Dr. ${doctorName} has been cancelled.`;
+    // const doctorBody = `Appointment with patient ${patientName} has been cancelled.`;
+
+    if (patientFcmToken) sendNotification(patientFcmToken, title, patientBody, { appointmentId });
+    // if (doctorFcmToken) sendNotification(doctorFcmToken, title, doctorBody, { appointmentId });
+
     return res.status(200).json({
       status: "success",
       message: "Appointment cancelled successfully",
@@ -1828,6 +1876,7 @@ const patient = users[appointment.userId];
 
 const doctorName = `${doctor?.firstname || ""} ${doctor?.lastname || ""}`.trim();
 const patientMobile = patient?.mobile;
+ const patientFcmToken = patient?.fcmToken;
 
     if (patientMobile) {
   const formattedDate = moment(newDate).format("DD-MM-YYYY");
@@ -1840,6 +1889,17 @@ console.log("Reschedule SMS:", rescheduleMsg, patientMobile);
     console.error("Failed to send SMS:", error);
   }
 }
+
+ // Send push notifications
+    const formattedDate = moment(newDate).format("DD-MM-YYYY");
+    const title = "Appointment Rescheduled";
+    const patientBody = `Your appointment with Dr. ${doctorName} has been rescheduled to ${formattedDate} at ${newTime}.`;
+    const doctorBody = `Appointment with patient ${patient?.firstname || ""} ${patient?.lastname || ""} has been rescheduled to ${formattedDate} at ${newTime}.`;
+
+    if (patientFcmToken) {
+      sendNotification(patientFcmToken, title, patientBody, { appointmentId });
+    }
+   
 
     return res.status(200).json({
       status: "success",

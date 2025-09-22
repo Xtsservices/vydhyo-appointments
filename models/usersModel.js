@@ -126,7 +126,11 @@ const userSchema = new mongoose.Schema({
   access: {
     type: [String],
     default: []
-  }
+  },
+   fcmToken: {
+    type: String,
+    default: null,
+  },
 });
 
 module.exports = mongoose.model('User', userSchema);
