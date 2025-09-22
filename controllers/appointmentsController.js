@@ -524,6 +524,15 @@ exports.createAppointment = async (req, res) => {
         message: "Appointment date & time must not be in the past.",
       });
     }
+
+    // Additional check: Limit to next two weeks
+    const twoWeeksFromNow = now.clone().add(14, 'days');
+    if (appointmentDateTime.isAfter(twoWeeksFromNow)) {
+      return res.status(400).json({
+        status: "fail",
+        message: "Appointment date must be within the next two weeks.",
+      });
+    }
     // Step 3: Check if slot is already booked
     const checkSlotAvailable = await appointmentModel.find({
       doctorId: req.body.doctorId,
