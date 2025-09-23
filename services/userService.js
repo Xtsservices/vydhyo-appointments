@@ -59,9 +59,22 @@ const getUsersByIds = async (userIds) => {
   }
 };
 
+async function getMinimalUser(userId, authHeader) {
+  try {
+    const response = await axios.get(`${USER_SERVICE_BASE_URL}/users/getUserMinimalData?userId=${userId}`, {
+      headers: { Authorization: authHeader },
+    });
+    return response.data.data; // contains { firstname, lastname, fcmToken }
+  } catch (err) {
+    console.error('Error fetching minimal user:', err.message);
+    throw new Error('Unable to fetch user');
+  }
+}
+
 
 module.exports = {
   getUserById,
   getUserDetailsBatch,
-  getUsersByIds
+  getUsersByIds,
+  getMinimalUser
 };
