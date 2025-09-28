@@ -556,6 +556,26 @@ exports.createAppointment = async (req, res) => {
     const finalAmount = req.body.finalAmount || req.body.amount;
     if (req.body.appSource === "patientApp" && req.body.paymentMethod === "wallet") {
       try {
+        // 🔹 1. Check KYC Verification
+    const kycResponse = await axios.get(
+      `http://localhost:4002/users/getKycByUserId?userId=${req.body.userId}`,
+      { headers: { "Content-Type": "application/json" } }
+    );
+
+    if (kycResponse.data?.status !== "success") {
+      return res.status(500).json({
+        status: "fail",
+        message: "Failed to fetch KYC details",
+      });
+    }
+
+    const kycData = kycResponse.data?.data;
+    if (!kycData || !kycData.kycVerified) {
+      return res.status(400).json({
+        status: "fail",
+        message: "KYC verification is required to use wallet balance.",
+      });
+    }
         const walletResponse = await axios.get(
           `http://localhost:4003/wallet/${req.body.userId}`,
           { headers: { "Content-Type": "application/json" } }
