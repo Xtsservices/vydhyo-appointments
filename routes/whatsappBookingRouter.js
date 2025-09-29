@@ -6,7 +6,8 @@ const {
     booking,
     createWhatsappAppointment,
     CashfreePaymentLinkDetails,
-    cashfreeCallback
+    cashfreeCallback,
+    cashfreeCallbackWeb
 } = require('../controllers/whatsappController');
 
 
@@ -19,5 +20,10 @@ router.post('/CashfreePaymentLinkDetails', CashfreePaymentLinkDetails);// Handle
 router.get('/cashfreecallback', cashfreeCallback);
 router.post('/cashfreecallback', cashfreeCallback);
 
+
+
+
+// Cashfree callback endpoint for pg web
+router.post("/order/cashfreecallback",cashfreeCallbackWeb);
 
 module.exports = router;
