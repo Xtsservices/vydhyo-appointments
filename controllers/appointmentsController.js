@@ -512,6 +512,7 @@ exports.createAppointment = async (req, res) => {
         message: error.details[0].message,
       });
     }
+    console.log("req.body", req.body);
     // Step 2: Check appointment time validity
     const appointmentDateTime = moment.tz(
       `${req.body.appointmentDate} ${req.body.appointmentTime}`,
