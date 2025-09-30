@@ -23,6 +23,8 @@ import {
   createWhatsAppPayment,
   updateWhatsAppPaymentStatus,
 } from "../services/paymentService.js";
+import winstonLogger from "../utils/winstonLogger.js";
+// import { winstonLogger } from "../utils/winstonLogger.js";
 
 // Duplicate API for WhatsApp integration
 export const getSlotsByDoctorIdAndDateForWhatsapp = async (req, res) => {
@@ -1021,6 +1023,48 @@ export const cashfreeCallback = async (
       }`
     );
     return res.status(statusCodes.INTERNAL_SERVER_ERROR).json({
+      message: getMessage("error.internalServerError"),
+    });
+  }
+};
+
+
+export const cashfreeCallbackWeb = async (
+  req,
+  res
+) => {
+  try {
+    // Get parameters from either query params (GET) or request body (POST)
+    const order_id =
+      req.method === "GET" ? req.query.order_id : req.body.order_id;
+    const payment_status =
+      req.method === "GET" ? req.query.payment_status : req.body.payment_status;
+    const payment_amount =
+      req.method === "GET" ? req.query.payment_amount : req.body.payment_amount;
+    const payment_currency =
+      req.method === "GET"
+        ? req.query.payment_currency
+        : req.body.payment_currency;
+    const transaction_id =
+      req.method === "GET" ? req.query.transaction_id : req.body.transaction_id;
+
+    // Return a placeholder response for now
+    return res.status(200).json({
+      message: "Callback processed successfully",
+      data: {
+        order_id,
+        payment_status,
+        payment_amount,
+        payment_currency,
+        transaction_id,
+      },
+    });
+  } catch (error) {
+    winstonLogger.error(
+      `Error processing Cashfree callback: ${error instanceof Error ? error.message : error
+      }`
+    );
+    return res.status(500).json({
       message: getMessage("error.internalServerError"),
     });
   }

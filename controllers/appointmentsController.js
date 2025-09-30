@@ -65,6 +65,40 @@ exports.updateAppointmentStatus = async (req, res) => {
       });
     }
 
+    // 🔔 Send FCM notification only if appointment is scheduled
+    try {
+      if (updatedAppointment.appSource === "patientApp") {
+        // Fetch patient info
+        const patient = await getMinimalUser(
+          updatedAppointment.userId,
+          req.headers.authorization
+        );
+
+        if (!patient || !patient.fcmToken) {
+          console.log("No FCM token found for the patient, skipping notification");
+        } else {
+          // Fetch doctor info
+          const doctor = await getMinimalUser(
+            updatedAppointment.doctorId,
+            req.headers.authorization
+          );
+
+          const doctorName = doctor
+            ? `Dr. ${doctor.firstname} ${doctor.lastname}`
+            : "your doctor";
+
+          sendNotification(
+            patient.fcmToken, // FCM token
+            "Appointment Scheduled",
+            `Your appointment with ${doctorName} is scheduled on ${updatedAppointment.appointmentDate} at ${updatedAppointment.appointmentTime}`,
+            { appointmentId: updatedAppointment.appointmentId }
+          );
+        }
+      }
+    } catch (err) {
+      console.error("Error sending FCM notification:", err.message);
+    }
+
     res.status(200).json({
       status: "success",
       data: {
@@ -557,6 +591,26 @@ exports.createAppointment = async (req, res) => {
     const finalAmount = req.body.finalAmount || req.body.amount;
     if (req.body.appSource === "patientApp" && req.body.paymentMethod === "wallet") {
       try {
+        // 🔹 1. Check KYC Verification
+    const kycResponse = await axios.get(
+      `http://localhost:4002/users/getKycByUserId?userId=${req.body.userId}`,
+      { headers: { "Content-Type": "application/json" } }
+    );
+
+    if (kycResponse.data?.status !== "success") {
+      return res.status(500).json({
+        status: "fail",
+        message: "Failed to fetch KYC details",
+      });
+    }
+
+    const kycData = kycResponse.data?.data;
+    if (!kycData || !kycData.kycVerified) {
+      return res.status(400).json({
+        status: "fail",
+        message: "KYC verification is required to use wallet balance.",
+      });
+    }
         const walletResponse = await axios.get(
           `http://localhost:4003/wallet/${req.body.userId}`,
           { headers: { "Content-Type": "application/json" } }
@@ -884,7 +938,8 @@ console.log("referralUpdateResp", referralUpdateResp.data);
 
     // Step 11: Send FCM Notification if patientApp and fcmToken exists
     const appointmentToNotify = updatedAppointment || appointment;
-   if (req.body.appSource === "patientApp") {
+   if (req.body.appSource === "patientApp" &&
+  appointmentToNotify.appointmentStatus === "scheduled") {
   try {
     // Fetch patient info
       const patient = await getMinimalUser(req.body.userId, req.headers.authorization);
