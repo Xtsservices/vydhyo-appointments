@@ -1610,7 +1610,7 @@ console.log("Final payment update after refund:", finalPaymentUpdate);
         });
       }
     }
-else if (payment.data.paymentMethod === "upi") {
+else if ( payment.data.appSource==='patientApp' && payment.data.paymentMethod === "upi") {
   try {
     const refundResponse = await initiateCashfreeRefund(
       payment.data.transactionId, // Cashfree order id stored when payment was made
