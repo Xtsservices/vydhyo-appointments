@@ -952,6 +952,7 @@ console.log("referralUpdateResp", referralUpdateResp.data);
         const doctorName = `${doctor.firstname} ${doctor.lastname}`;
         const patientMobile = patient?.mobile;
         const patientFcmToken = patient?.fcmToken;
+  const templateid =  "1707175567858037366"; 
    
          // SMS
         if (patientMobile) {
@@ -959,7 +960,7 @@ console.log("referralUpdateResp", referralUpdateResp.data);
           const smsMsg = `Dear ${patient.firstname}, your appointment with Dr. ${doctorName} on Date ${formattedDate} at Time ${req.body.appointmentTime} is confirmed. VYDHYO`;
           
           // const smsMsg = `Dear ${patient.firstname}, your appointment with ${doctorName} on Date ${formattedDate} at Time ${req.body.appointmentTime} is confirmed. VYDHYO`;
-          await sendOTPSMS(patientMobile, smsMsg,  "1707175567858037366");
+          await sendOTPSMS(patientMobile, smsMsg, templateid);
         }
 
         // FCM Notification
