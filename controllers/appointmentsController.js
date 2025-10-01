@@ -938,27 +938,44 @@ console.log("referralUpdateResp", referralUpdateResp.data);
 
     // Step 11: Send FCM Notification if patientApp and fcmToken exists
     const appointmentToNotify = updatedAppointment || appointment;
-   if (req.body.appSource === "patientApp" &&
+  if (
+  (req.body.appSource === "patientApp" || req.body.appSource === "walkIn") &&
   appointmentToNotify.appointmentStatus === "scheduled") {
   try {
     // Fetch patient info
-      const patient = await getMinimalUser(req.body.userId, req.headers.authorization);
-  
-    if (!patient || !patient.fcmToken) {
-      console.log("No FCM token found for the patient, skipping notification");
-    } else {
-      // Fetch doctor info
-       const doctor = await getMinimalUser(req.body.doctorId, req.headers.authorization);
-   
-      const doctorName = doctor ? `Dr. ${doctor.firstname} ${doctor.lastname}` : "your doctor";
 
-      sendNotification(
-        patient.fcmToken, // use token from user model
-        'Appointment Created',
-        `Your appointment with ${doctorName} is scheduled on ${req.body.appointmentDate} at ${req.body.appointmentTime}`,
-        { appointmentId: req.body.appointmentId }
-      );
-    }
+      // Fetch doctor info
+       const users = await getUsersByIds([req.body.userId, req.body.doctorId]);
+        const patient = users[req.body.userId];
+        const doctor = users[req.body.doctorId];
+
+        const doctorName = `${doctor.firstname} ${doctor.lastname}`;
+        const patientMobile = patient?.mobile;
+        const patientFcmToken = patient?.fcmToken;
+   
+         // SMS
+        if (patientMobile) {
+          const formattedDate = moment(req.body.appointmentDate).format("DD-MM-YYYY");
+          const smsMsg = `Dear ${patient.firstname}, your appointment with Dr. ${doctorName} on Date ${formattedDate} at Time ${req.body.appointmentTime} is confirmed. VYDHYO`;
+          
+          // const smsMsg = `Dear ${patient.firstname}, your appointment with ${doctorName} on Date ${formattedDate} at Time ${req.body.appointmentTime} is confirmed. VYDHYO`;
+          await sendOTPSMS(patientMobile, smsMsg,  "1707175567858037366");
+        }
+
+        // FCM Notification
+        if (patientFcmToken) {
+          const title = "Appointment Confirmed";
+          const body = `Your appointment with Dr ${doctorName} is scheduled on ${moment(req.body.appointmentDate).format("DD-MM-YYYY")} at ${req.body.appointmentTime}`;
+          sendNotification(patientFcmToken, title, body, { appointmentId: req.body.appointmentId });
+        }
+
+      // sendNotification(
+      //   patient.fcmToken, // use token from user model
+      //   'Appointment Created',
+      //   `Your appointment with ${doctorName} is scheduled on ${req.body.appointmentDate} at ${req.body.appointmentTime}`,
+      //   { appointmentId: req.body.appointmentId }
+      // );
+    
   } catch (err) {
     console.error("Error sending FCM notification:", err.message);
   }
