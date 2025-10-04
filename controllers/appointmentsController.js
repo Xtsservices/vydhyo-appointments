@@ -94,6 +94,16 @@ exports.updateAppointmentStatus = async (req, res) => {
             { appointmentId: updatedAppointment.appointmentId }
           );
         }
+        // ✅ SMS Notification
+        const patientMobile = patient?.mobile;
+        const templateid = "1707175567858037366";
+
+        if (patientMobile) {
+          const formattedDate = moment(updatedAppointment.appointmentDate).format("DD-MM-YYYY");
+          const smsMsg = `Dear ${patient.firstname}, your appointment with Dr. ${doctorName} on Date ${formattedDate} at Time ${updatedAppointment.appointmentTime} is confirmed. VYDHYO`;
+
+          await sendOTPSMS(patientMobile, smsMsg, templateid);
+        }
       }
     } catch (err) {
       console.error("Error sending FCM notification:", err.message);
